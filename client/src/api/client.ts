@@ -2,7 +2,7 @@ import axios from "axios";
 import type { ApiResponse } from "../types";
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? "/api"
+  baseURL: "/api"
 });
 
 api.interceptors.request.use((config) => {
