@@ -1,7 +1,7 @@
 import type * as React from "react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Bell, FileCheck2, HeartPulse, LogOut, Menu, Search, ShieldCheck, UploadCloud, UserCheck } from "lucide-react";
 import { api, unwrap } from "../api/client";
@@ -25,11 +25,21 @@ const nav: Record<Role, string[]> = {
   ADMIN: ["Overview", "Users", "Doctor Verification", "Hospital Verification", "Laboratory Verification", "Medical Records Monitor", "Blockchain Monitor", "Emergency Access Audit", "Access Audit Logs", "System Settings"]
 };
 
+function slugFor(item: string) {
+  return item.toLowerCase().replaceAll("&", "and").replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/(^-|-$)/g, "");
+}
+
 export function DashboardPage() {
   const { user, logout } = useAuth();
+  const params = useParams();
   const [open, setOpen] = useState(false);
   const wallet = useMetaMask();
   if (!user) return null;
+  const defaultSection = slugFor(nav[user.role][0]);
+  const section = params.section ?? defaultSection;
+  const validSections = nav[user.role].map(slugFor);
+  if (!params.section) return <Navigate to={`/dashboard/${defaultSection}`} replace />;
+  if (!validSections.includes(section)) return <Navigate to={`/dashboard/${defaultSection}`} replace />;
 
   return (
     <div className="min-h-screen bg-sky-50">
@@ -39,7 +49,10 @@ export function DashboardPage() {
           <div className="font-black">{user.fullName}</div>
           <div className="text-sm font-semibold text-medical-700">{user.role}</div>
         </div>
-        <nav className="mt-6 space-y-1">{nav[user.role].map((item) => <a key={item} href={`#${item.toLowerCase().replaceAll(" ", "-")}`} className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-sky-50">{item}</a>)}</nav>
+        <nav className="mt-6 space-y-1">{nav[user.role].map((item) => {
+          const slug = slugFor(item);
+          return <Link key={item} to={`/dashboard/${slug}`} onClick={() => setOpen(false)} className={`block rounded-lg px-3 py-2 text-sm font-semibold ${section === slug ? "bg-medical-600 text-white" : "text-slate-600 hover:bg-sky-50"}`}>{item}</Link>;
+        })}</nav>
         <button onClick={logout} className="mt-6 flex items-center gap-2 rounded-lg px-3 py-2 font-bold text-red-600"><LogOut size={18} />Logout</button>
       </aside>
 
@@ -58,11 +71,11 @@ export function DashboardPage() {
         <div className="space-y-6 p-5">
           <SecurityNote />
           {wallet.error && <div className="rounded-lg bg-amber-50 p-3 text-sm font-bold text-amber-700">{wallet.error}</div>}
-          {user.role === "PATIENT" && <PatientDashboard />}
-          {user.role === "DOCTOR" && <DoctorDashboard />}
-          {user.role === "HOSPITAL" && <HospitalDashboard />}
-          {user.role === "LABORATORY" && <LabDashboard />}
-          {user.role === "ADMIN" && <AdminDashboard />}
+          {user.role === "PATIENT" && <PatientDashboard section={section} />}
+          {user.role === "DOCTOR" && <DoctorDashboard section={section} />}
+          {user.role === "HOSPITAL" && <HospitalDashboard section={section} />}
+          {user.role === "LABORATORY" && <LabDashboard section={section} />}
+          {user.role === "ADMIN" && <AdminDashboard section={section} />}
         </div>
       </main>
     </div>
@@ -119,7 +132,7 @@ function PatientSearchCard({
   );
 }
 
-function PatientDashboard() {
+function PatientDashboard({ section }: { section: string }) {
   const qc = useQueryClient();
   const profile = useQuery({ queryKey: ["patient-profile"], queryFn: () => unwrap<any>(api.get("/patients/profile")) });
   const records = useQuery({ queryKey: ["patient-records"], queryFn: () => unwrap<MedicalRecord[]>(api.get("/patients/medical-records")) });
@@ -140,20 +153,28 @@ function PatientDashboard() {
     verifiedRecords: records.data?.filter((r) => ["ANCHORED", "VERIFIED"].includes(r.blockchainStatus)).length
   }), [profile.data, records.data, permissions.data]);
 
-  return (
-    <>
-      <section id="overview"><StatsGrid stats={stats} /></section>
-      <section id="medical-timeline"><RecordList records={records.data ?? []} onVerify={(id) => verify.mutate(id)} /></section>
-      <section id="access-requests" className="grid gap-4 md:grid-cols-2">
-        <Card><h2 className="text-xl font-black">Incoming Access Requests</h2><div className="mt-4 space-y-3">{(requests.data ?? []).map((r) => <div key={r.id} className="rounded-lg bg-sky-50 p-3"><div className="font-bold">{r.requester.fullName}</div><div className="text-sm text-slate-600">{r.reason}</div><div className="mt-3 flex gap-2"><Button onClick={() => approve.mutate(r.id)}>Approve</Button><Button onClick={() => reject.mutate(r.id)} className="bg-red-600 hover:bg-red-700">Reject</Button></div></div>)}</div></Card>
-        <Card><h2 className="text-xl font-black">Shared Access</h2><div className="mt-4 space-y-3">{(permissions.data ?? []).map((p) => <div key={p.id} className="rounded-lg bg-sky-50 p-3"><div className="font-bold">{p.grantee.fullName}</div><div className="text-sm text-slate-600">{(p.grantedCategories as string[]).join(", ")}</div><Button onClick={() => revoke.mutate(p.id)} className="mt-3 bg-red-600 hover:bg-red-700">Revoke</Button></div>)}</div></Card>
-      </section>
-      <section id="notifications"><Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><Bell />Notifications</h2>{(notifications.data ?? []).map((n) => <div key={n.id} className="border-t border-sky-100 py-3"><div className="font-bold">{n.title}</div><div className="text-sm text-slate-600">{n.message}</div></div>)}</Card></section>
-    </>
-  );
+  const accessRequestsView = <Card><h2 className="text-xl font-black">Incoming Access Requests</h2><div className="mt-4 space-y-3">{(requests.data ?? []).map((r) => <div key={r.id} className="rounded-lg bg-sky-50 p-3"><div className="font-bold">{r.requester.fullName}</div><div className="text-sm text-slate-600">{r.reason}</div><div className="mt-3 flex gap-2"><Button onClick={() => approve.mutate(r.id)} disabled={approve.isPending}>Approve</Button><Button onClick={() => reject.mutate(r.id)} disabled={reject.isPending} className="bg-red-600 hover:bg-red-700">Reject</Button></div></div>)}</div></Card>;
+  const sharedAccessView = <Card><h2 className="text-xl font-black">Shared Access</h2><div className="mt-4 space-y-3">{(permissions.data ?? []).map((p) => <div key={p.id} className="rounded-lg bg-sky-50 p-3"><div className="font-bold">{p.grantee.fullName}</div><div className="text-sm text-slate-600">{(p.grantedCategories as string[]).join(", ")}</div><Button onClick={() => revoke.mutate(p.id)} disabled={revoke.isPending} className="mt-3 bg-red-600 hover:bg-red-700">Revoke</Button></div>)}</div></Card>;
+
+  if (section === "overview") return <StatsGrid stats={stats} />;
+  if (section === "my-health-profile" || section === "settings") return <PatientProfileCard profile={profile.data} />;
+  if (section === "medical-timeline" || section === "prescriptions" || section === "diagnostic-reports" || section === "blockchain-verification") return <RecordList records={records.data ?? []} onVerify={(id) => verify.mutate(id)} />;
+  if (section === "access-requests") return accessRequestsView;
+  if (section === "shared-access") return sharedAccessView;
+  if (section === "emergency-profile") return <EmergencyProfileCard profile={profile.data} />;
+  if (section === "notifications") return <Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><Bell />Notifications</h2>{(notifications.data ?? []).map((n) => <div key={n.id} className="border-t border-sky-100 py-3"><div className="font-bold">{n.title}</div><div className="text-sm text-slate-600">{n.message}</div></div>)}</Card>;
+  return <StatsGrid stats={stats} />;
 }
 
-function DoctorDashboard() {
+function PatientProfileCard({ profile }: { profile: any }) {
+  return <Card><h2 className="mb-4 text-xl font-black">My Health Profile</h2><div className="grid gap-3 md:grid-cols-2">{Object.entries(profile ?? {}).filter(([key]) => !["id", "userId", "createdAt", "updatedAt", "user"].includes(key)).map(([key, value]) => <div key={key} className="rounded-lg bg-sky-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">{key.replaceAll(/([A-Z])/g, " $1")}</div><div className="mt-1 break-words font-semibold">{Array.isArray(value) ? value.join(", ") : typeof value === "object" && value ? JSON.stringify(value) : String(value ?? "-")}</div></div>)}</div></Card>;
+}
+
+function EmergencyProfileCard({ profile }: { profile: any }) {
+  return <Card><h2 className="mb-4 text-xl font-black">Emergency Profile</h2><div className="grid gap-3 md:grid-cols-2"><div className="rounded-lg bg-sky-50 p-3"><b>Emergency access:</b> {profile?.emergencyAccessEnabled ? "Enabled" : "Disabled"}</div><div className="rounded-lg bg-sky-50 p-3"><b>Blood group:</b> {profile?.bloodGroup ?? "-"}</div><div className="rounded-lg bg-sky-50 p-3"><b>Allergies:</b> {JSON.stringify(profile?.allergies ?? [])}</div><div className="rounded-lg bg-sky-50 p-3"><b>Emergency contact:</b> {profile?.emergencyContactName} {profile?.emergencyContactPhone}</div></div></Card>;
+}
+
+function DoctorDashboard({ section }: { section: string }) {
   const qc = useQueryClient();
   const [message, setMessage] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
@@ -172,18 +193,20 @@ function DoctorDashboard() {
     onSuccess: () => { setMessage("Prescription saved. The patient can now see it in their records."); void qc.invalidateQueries(); },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Prescription creation failed")
   });
-  return (
-    <>
-      <StatusMessage message={message} />
-      <StatsGrid stats={dashboard.data ?? {}} />
-      <section id="patient-search" className="grid gap-4 lg:grid-cols-2">
+  const searchAndPrescription = (
+    <section className="grid gap-4 lg:grid-cols-2">
         <PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} />
         <PrescriptionForm selectedPatient={selectedPatient} onSubmit={(payload) => createPrescription.mutate(payload)} saving={createPrescription.isPending} />
       </section>
-      <section id="access-requests"><Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card></section>
-      <section id="my-consultations"><Card><h2 className="text-xl font-black">Recent Prescriptions</h2>{(prescriptions.data ?? []).map((p) => <div key={p.id} className="border-t border-sky-100 py-3"><b>{p.diagnosis}</b> for {p.patient.user.fullName}</div>)}</Card></section>
-    </>
   );
+  const content =
+    section === "overview" ? <StatsGrid stats={dashboard.data ?? {}} /> :
+    section === "patient-search" || section === "create-prescription" ? searchAndPrescription :
+    section === "access-requests" ? <Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card> :
+    section === "my-consultations" || section === "medical-records" ? <Card><h2 className="text-xl font-black">Recent Prescriptions</h2>{(prescriptions.data ?? []).map((p) => <div key={p.id} className="border-t border-sky-100 py-3"><b>{p.diagnosis}</b> for {p.patient.user.fullName}</div>)}</Card> :
+    section === "blockchain-activity" ? <Card><h2 className="text-xl font-black">Blockchain Activity</h2>{(dashboard.data?.transactions ?? []).map((tx: any) => <div key={tx.id} className="border-t border-sky-100 py-3"><b>{tx.transactionType}</b> - {tx.status} - {tx.txHash ?? tx.errorMessage ?? "Pending"}</div>)}</Card> :
+    <Card><h2 className="text-xl font-black">Profile & Verification</h2><div className="mt-3 rounded-lg bg-sky-50 p-3 font-semibold">Verification status: {dashboard.data?.verificationStatus ?? "PENDING"}</div></Card>;
+  return <><StatusMessage message={message} />{content}</>;
 }
 
 function PrescriptionForm({ selectedPatient, onSubmit, saving }: { selectedPatient?: PatientSummary | null; onSubmit: (payload: any) => void; saving?: boolean }) {
@@ -196,7 +219,7 @@ function PrescriptionForm({ selectedPatient, onSubmit, saving }: { selectedPatie
   return <Card><h2 className="text-xl font-black">Create Prescription</h2>{!selectedPatient && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. If saving is blocked, ask the patient to approve your access request.</div>}<form onSubmit={submit} className="mt-4 grid gap-3"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Input name="diagnosis" placeholder="Diagnosis" required /><Input name="medicineName" placeholder="Medication name" required /><Input name="dosage" placeholder="Dosage" required /><Input name="frequency" placeholder="Frequency" required /><Input name="duration" placeholder="Duration" required /><Input name="followUpDate" type="date" /><Textarea name="instructions" placeholder="Instructions" /><Textarea name="notes" placeholder="Clinical notes" /><Button disabled={!selectedPatient || saving}>{saving ? "Saving..." : "Save Prescription"}</Button></form></Card>;
 }
 
-function HospitalDashboard() {
+function HospitalDashboard({ section }: { section: string }) {
   const qc = useQueryClient();
   const [message, setMessage] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
@@ -209,15 +232,39 @@ function HospitalDashboard() {
     onSuccess: () => { setMessage("Hospital access request sent. Patient approval is required before saving records."); void qc.invalidateQueries(); },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Access request failed")
   });
-  const createAdmission = useMutation({
-    mutationFn: (payload: any) => unwrap(api.post("/hospitals/admissions", payload)),
-    onSuccess: () => { setMessage("Admission record saved."); void qc.invalidateQueries(); },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Record save failed")
-  });
-  return <><StatusMessage message={message} /><StatsGrid stats={dashboard.data ?? {}} /><section className="grid gap-4 lg:grid-cols-2"><PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} /><RecordForm title="Create Admission Record" selectedPatient={selectedPatient} fields={["reason", "ward", "notes"]} onSubmit={(p) => createAdmission.mutate(p)} saving={createAdmission.isPending} /></section><section id="access-requests"><Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card></section></>;
+    const createAdmission = useMutation({
+      mutationFn: (payload: any) => unwrap(api.post("/hospitals/admissions", payload)),
+      onSuccess: () => { setMessage("Admission record saved."); void qc.invalidateQueries(); },
+      onError: (error) => setMessage(error instanceof Error ? error.message : "Record save failed")
+    });
+    const createDischarge = useMutation({
+      mutationFn: (payload: any) => unwrap(api.post("/hospitals/discharge-summaries", payload)),
+      onSuccess: () => { setMessage("Discharge summary saved."); void qc.invalidateQueries(); },
+      onError: (error) => setMessage(error instanceof Error ? error.message : "Discharge summary failed")
+    });
+    const createSurgery = useMutation({
+      mutationFn: (payload: any) => unwrap(api.post("/hospitals/surgeries", payload)),
+      onSuccess: () => { setMessage("Surgery record saved."); void qc.invalidateQueries(); },
+      onError: (error) => setMessage(error instanceof Error ? error.message : "Surgery record failed")
+    });
+    const patientSearch = <PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} />;
+    const activeHospitalMutation = section === "surgery-records" ? createSurgery : section === "discharge-summaries" ? createDischarge : createAdmission;
+    const recordForm = <RecordForm title={section === "surgery-records" ? "Create Surgery Record" : section === "discharge-summaries" ? "Create Discharge Summary" : "Create Admission Record"} selectedPatient={selectedPatient} fields={section === "surgery-records" ? ["surgeryName", "surgeon", "notes"] : section === "discharge-summaries" ? ["diagnosis", "summary", "instructions"] : ["reason", "ward", "notes"]} onSubmit={(p) => activeHospitalMutation.mutate(p)} saving={activeHospitalMutation.isPending} />;
+  const content =
+    section === "overview" ? <StatsGrid stats={dashboard.data ?? {}} /> :
+    section === "patient-registration" ? <PatientRegistrationInfo /> :
+    section === "patient-search" || section === "admissions" || section === "discharge-summaries" || section === "surgery-records" ? <section className="grid gap-4 lg:grid-cols-2">{patientSearch}{recordForm}</section> :
+    section === "access-requests" ? <Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card> :
+    section === "blockchain-logs" ? <Card><h2 className="text-xl font-black">Blockchain Logs</h2>{(dashboard.data?.transactions ?? []).map((tx: any) => <div key={tx.id} className="border-t border-sky-100 py-3"><b>{tx.transactionType}</b> - {tx.status}</div>)}</Card> :
+    <Card><h2 className="text-xl font-black">{section.split("-").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ")}</h2><p className="mt-3 text-slate-600">This hospital page uses the patient search and access-controlled record workflow.</p></Card>;
+  return <><StatusMessage message={message} />{content}</>;
 }
 
-function LabDashboard() {
+function PatientRegistrationInfo() {
+  return <Card><h2 className="text-xl font-black">Patient Registration</h2><p className="mt-3 text-slate-600">Use the backend hospital registration API for new patient intake. Existing demo workflows use Health ID search so hospital records are attached to the correct patient profile.</p></Card>;
+}
+
+function LabDashboard({ section }: { section: string }) {
   const qc = useQueryClient();
   const [message, setMessage] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
@@ -246,18 +293,18 @@ function LabDashboard() {
     data.set("patientId", selectedPatient.id);
     upload.mutate(data);
   }
-  return (
-    <>
-      <StatusMessage message={message} />
-      <StatsGrid stats={dashboard.data ?? {}} />
-      <section id="patient-search" className="grid gap-4 lg:grid-cols-2"><PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} /><Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><UploadCloud />Upload Diagnostic Report</h2>{!selectedPatient && <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. The patient must approve diagnostic report access.</div>}<form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Select name="category"><option>Blood test</option><option>Pathology</option><option>X-ray</option><option>MRI</option><option>CT scan</option><option>Ultrasound</option><option>Other</option></Select><Input name="title" placeholder="Report title" required /><Input name="testDate" type="date" required /><Input name="file" type="file" accept="application/pdf,image/png,image/jpeg" required /><Textarea name="resultSummary" placeholder="Result summary" /><Button disabled={!selectedPatient || upload.isPending}>{upload.isPending ? "Uploading..." : "Upload and Anchor"}</Button></form></Card></section>
-      <section id="access-requests"><Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card></section>
-      <RecordList records={reports.data ?? []} />
-    </>
-  );
+  const uploadView = <section className="grid gap-4 lg:grid-cols-2"><PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} /><Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><UploadCloud />Upload Diagnostic Report</h2>{!selectedPatient && <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. The patient must approve diagnostic report access.</div>}<form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Select name="category"><option>Blood test</option><option>Pathology</option><option>X-ray</option><option>MRI</option><option>CT scan</option><option>Ultrasound</option><option>Other</option></Select><Input name="title" placeholder="Report title" required /><Input name="testDate" type="date" required /><Input name="file" type="file" accept="application/pdf,image/png,image/jpeg" required /><Textarea name="resultSummary" placeholder="Result summary" /><Button disabled={!selectedPatient || upload.isPending}>{upload.isPending ? "Uploading..." : "Upload and Anchor"}</Button></form></Card></section>;
+  const content =
+    section === "overview" ? <StatsGrid stats={dashboard.data ?? {}} /> :
+    section === "patient-search" || section === "upload-diagnostic-report" ? uploadView :
+    section === "my-reports" || section === "verification" ? <RecordList records={reports.data ?? []} /> :
+    section === "access-requests" ? <Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card> :
+    section === "blockchain-logs" ? <RecordList records={reports.data ?? []} /> :
+    <Card><h2 className="text-xl font-black">Profile</h2><div className="mt-3 rounded-lg bg-sky-50 p-3 font-semibold">Verification status: {dashboard.data?.verificationStatus ?? "PENDING"}</div></Card>;
+  return <><StatusMessage message={message} />{content}</>;
 }
 
-function AdminDashboard() {
+function AdminDashboard({ section }: { section: string }) {
   const qc = useQueryClient();
   const [message, setMessage] = useState("");
   const dashboard = useQuery({ queryKey: ["admin-dashboard"], queryFn: () => unwrap<any>(api.get("/admin/dashboard")) });
@@ -278,48 +325,29 @@ function AdminDashboard() {
     onError: (error) => setMessage(error instanceof Error ? error.message : "User status update failed")
   });
   const chartData = Object.entries(dashboard.data ?? {}).map(([name, value]) => ({ name, value: Number(value) || 0 }));
-  const doctors = (users.data ?? []).filter((user) => user.role === "DOCTOR");
-  const hospitals = (users.data ?? []).filter((user) => user.role === "HOSPITAL");
-  const laboratories = (users.data ?? []).filter((user) => user.role === "LABORATORY");
-  return (
-    <>
-      <StatusMessage message={message} />
-      <section id="overview" className="space-y-4">
-        <StatsGrid stats={dashboard.data ?? {}} />
-        <Card><h2 className="text-xl font-black">System Analytics</h2><div className="h-64"><ResponsiveContainer><AreaChart data={chartData}><XAxis dataKey="name" hide /><Tooltip /><Area dataKey="value" fill="#1689e8" stroke="#096fc7" /></AreaChart></ResponsiveContainer></div></Card>
-      </section>
-
-      <section id="users">
-        <Card><h2 className="mb-4 text-xl font-black">Users</h2><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-slate-500"><th className="py-2">Name</th><th>Role</th><th>Email</th><th>Status</th><th>Action</th></tr></thead><tbody>{(users.data ?? []).map((u) => <tr key={u.id} className="border-t border-sky-100"><td className="py-3 font-bold">{u.fullName}</td><td>{u.role}</td><td>{u.email}</td><td>{u.isActive ? <span className="font-bold text-green-700">Active</span> : <span className="font-bold text-red-700">Suspended</span>}</td><td><Button type="button" onClick={() => suspend.mutate({ id: u.id, isActive: !u.isActive })} className={u.isActive ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}>{u.isActive ? "Suspend" : "Activate"}</Button></td></tr>)}</tbody></table></div></Card>
-      </section>
-
-      <section id="doctor-verification"><VerificationPanel title="Doctor Verification" users={doctors} type="doctors" onAction={verify.mutate} /></section>
-      <section id="hospital-verification"><VerificationPanel title="Hospital Verification" users={hospitals} type="hospitals" onAction={verify.mutate} /></section>
-      <section id="laboratory-verification"><VerificationPanel title="Laboratory Verification" users={laboratories} type="laboratories" onAction={verify.mutate} /></section>
-
-      <section id="medical-records-monitor">
-        <Card><h2 className="mb-4 text-xl font-black">Medical Records Monitor</h2><AdminTable empty="No medical records yet.">{(records.data ?? []).map((record) => <tr key={record.id} className="border-t border-sky-100"><td className="py-3 font-bold">{record.title}</td><td>{record.recordType}</td><td>{record.patient?.healthId}</td><td>{record.creator?.fullName}</td><td><BlockchainStatusBadge status={record.blockchainStatus} /></td></tr>)}</AdminTable></Card>
-      </section>
-
-      <section id="blockchain-monitor">
-        <Card><h2 className="mb-4 text-xl font-black">Blockchain Monitor</h2><AdminTable empty="No blockchain transactions yet.">{(transactions.data ?? []).map((tx) => <tr key={tx.id} className="border-t border-sky-100"><td className="py-3 font-bold">{tx.transactionType}</td><td>{tx.status}</td><td>{tx.blockNumber ?? "-"}</td><td className="max-w-[240px] truncate">{tx.txHash ?? tx.errorMessage ?? "-"}</td><td>{new Date(tx.createdAt).toLocaleString()}</td></tr>)}</AdminTable></Card>
-      </section>
-
-      <section id="emergency-access-audit">
-        <Card><h2 className="mb-4 text-xl font-black">Emergency Access Audit</h2><AdminTable empty="No emergency access events.">{(emergencyLogs.data ?? []).map((log) => <tr key={log.id} className="border-t border-sky-100"><td className="py-3 font-bold">{log.requester?.fullName}</td><td>{log.patient?.user?.fullName}</td><td>{log.reason}</td><td>{new Date(log.createdAt).toLocaleString()}</td><td className="max-w-[220px] truncate">{log.blockchainTxHash ?? "-"}</td></tr>)}</AdminTable></Card>
-      </section>
-
-      <section id="access-audit-logs" className="grid gap-4 xl:grid-cols-2">
-        <Card><h2 className="mb-4 text-xl font-black">Access Permissions</h2><AdminTable empty="No access permissions.">{(accessPermissions.data ?? []).map((permission) => <tr key={permission.id} className="border-t border-sky-100"><td className="py-3 font-bold">{permission.grantee?.fullName}</td><td>{permission.patient?.healthId}</td><td>{permission.status}</td><td>{new Date(permission.expiresAt).toLocaleDateString()}</td><td>{permission.blockchainStatus}</td></tr>)}</AdminTable></Card>
-        <Card><h2 className="mb-4 text-xl font-black">Audit Logs</h2><AdminTable empty="No audit logs.">{(auditLogs.data ?? []).map((log) => <tr key={log.id} className="border-t border-sky-100"><td className="py-3 font-bold">{log.action}</td><td>{log.actor?.fullName ?? "System"}</td><td>{log.entityType}</td><td>{new Date(log.createdAt).toLocaleString()}</td><td>{log.ipAddress ?? "-"}</td></tr>)}</AdminTable></Card>
-      </section>
-
-      <section id="system-settings">
-        <Card><h2 className="mb-4 text-xl font-black">System Settings</h2><div className="grid gap-3 text-sm md:grid-cols-2"><div className="rounded-lg bg-sky-50 p-3"><b>API mode:</b> Live through Vercel proxy</div><div className="rounded-lg bg-sky-50 p-3"><b>Blockchain network:</b> SKALE Base Sepolia</div><div className="rounded-lg bg-sky-50 p-3"><b>Files:</b> Stored off-chain under backend uploads</div><div className="rounded-lg bg-sky-50 p-3"><b>Admin file access:</b> Metadata only, no sensitive file opening</div></div></Card>
-      </section>
-    </>
-  );
-}
+    const doctors = (users.data ?? []).filter((user) => user.role === "DOCTOR");
+    const hospitals = (users.data ?? []).filter((user) => user.role === "HOSPITAL");
+    const laboratories = (users.data ?? []).filter((user) => user.role === "LABORATORY");
+    const overviewView = <div className="space-y-4"><StatsGrid stats={dashboard.data ?? {}} /><Card><h2 className="text-xl font-black">System Analytics</h2><div className="h-64"><ResponsiveContainer><AreaChart data={chartData}><XAxis dataKey="name" hide /><Tooltip /><Area dataKey="value" fill="#1689e8" stroke="#096fc7" /></AreaChart></ResponsiveContainer></div></Card></div>;
+    const usersView = <Card><h2 className="mb-4 text-xl font-black">Users</h2><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-slate-500"><th className="py-2">Name</th><th>Role</th><th>Email</th><th>Status</th><th>Action</th></tr></thead><tbody>{(users.data ?? []).map((u) => <tr key={u.id} className="border-t border-sky-100"><td className="py-3 font-bold">{u.fullName}</td><td>{u.role}</td><td>{u.email}</td><td>{u.isActive ? <span className="font-bold text-green-700">Active</span> : <span className="font-bold text-red-700">Suspended</span>}</td><td><Button type="button" onClick={() => suspend.mutate({ id: u.id, isActive: !u.isActive })} disabled={suspend.isPending} className={u.isActive ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}>{u.isActive ? "Suspend" : "Activate"}</Button></td></tr>)}</tbody></table></div></Card>;
+    const recordsView = <Card><h2 className="mb-4 text-xl font-black">Medical Records Monitor</h2><AdminTable empty="No medical records yet.">{(records.data ?? []).map((record) => <tr key={record.id} className="border-t border-sky-100"><td className="py-3 font-bold">{record.title}</td><td>{record.recordType}</td><td>{record.patient?.healthId}</td><td>{record.creator?.fullName}</td><td><BlockchainStatusBadge status={record.blockchainStatus} /></td></tr>)}</AdminTable></Card>;
+    const blockchainView = <Card><h2 className="mb-4 text-xl font-black">Blockchain Monitor</h2><AdminTable empty="No blockchain transactions yet.">{(transactions.data ?? []).map((tx) => <tr key={tx.id} className="border-t border-sky-100"><td className="py-3 font-bold">{tx.transactionType}</td><td>{tx.status}</td><td>{tx.blockNumber ?? "-"}</td><td className="max-w-[240px] truncate">{tx.txHash ?? tx.errorMessage ?? "-"}</td><td>{new Date(tx.createdAt).toLocaleString()}</td></tr>)}</AdminTable></Card>;
+    const emergencyView = <Card><h2 className="mb-4 text-xl font-black">Emergency Access Audit</h2><AdminTable empty="No emergency access events.">{(emergencyLogs.data ?? []).map((log) => <tr key={log.id} className="border-t border-sky-100"><td className="py-3 font-bold">{log.requester?.fullName}</td><td>{log.patient?.user?.fullName}</td><td>{log.reason}</td><td>{new Date(log.createdAt).toLocaleString()}</td><td className="max-w-[220px] truncate">{log.blockchainTxHash ?? "-"}</td></tr>)}</AdminTable></Card>;
+    const auditView = <div className="grid gap-4 xl:grid-cols-2"><Card><h2 className="mb-4 text-xl font-black">Access Permissions</h2><AdminTable empty="No access permissions.">{(accessPermissions.data ?? []).map((permission) => <tr key={permission.id} className="border-t border-sky-100"><td className="py-3 font-bold">{permission.grantee?.fullName}</td><td>{permission.patient?.healthId}</td><td>{permission.status}</td><td>{new Date(permission.expiresAt).toLocaleDateString()}</td><td>{permission.blockchainStatus}</td></tr>)}</AdminTable></Card><Card><h2 className="mb-4 text-xl font-black">Audit Logs</h2><AdminTable empty="No audit logs.">{(auditLogs.data ?? []).map((log) => <tr key={log.id} className="border-t border-sky-100"><td className="py-3 font-bold">{log.action}</td><td>{log.actor?.fullName ?? "System"}</td><td>{log.entityType}</td><td>{new Date(log.createdAt).toLocaleString()}</td><td>{log.ipAddress ?? "-"}</td></tr>)}</AdminTable></Card></div>;
+    const settingsView = <Card><h2 className="mb-4 text-xl font-black">System Settings</h2><div className="grid gap-3 text-sm md:grid-cols-2"><div className="rounded-lg bg-sky-50 p-3"><b>API mode:</b> Live through Vercel proxy</div><div className="rounded-lg bg-sky-50 p-3"><b>Blockchain network:</b> SKALE Base Sepolia</div><div className="rounded-lg bg-sky-50 p-3"><b>Files:</b> Stored off-chain under backend uploads</div><div className="rounded-lg bg-sky-50 p-3"><b>Admin file access:</b> Metadata only, no sensitive file opening</div></div></Card>;
+    const content =
+      section === "overview" ? overviewView :
+      section === "users" ? usersView :
+      section === "doctor-verification" ? <VerificationPanel title="Doctor Verification" users={doctors} type="doctors" onAction={verify.mutate} /> :
+      section === "hospital-verification" ? <VerificationPanel title="Hospital Verification" users={hospitals} type="hospitals" onAction={verify.mutate} /> :
+      section === "laboratory-verification" ? <VerificationPanel title="Laboratory Verification" users={laboratories} type="laboratories" onAction={verify.mutate} /> :
+      section === "medical-records-monitor" ? recordsView :
+      section === "blockchain-monitor" ? blockchainView :
+      section === "emergency-access-audit" ? emergencyView :
+      section === "access-audit-logs" ? auditView :
+      settingsView;
+    return <><StatusMessage message={message} />{content}</>;
+  }
 
 function AdminTable({ children, empty }: { children: React.ReactNode; empty: string }) {
   const rows = Array.isArray(children) ? children.filter(Boolean) : children;

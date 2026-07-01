@@ -19,6 +19,7 @@ export default function App() {
       <Route path="/login" element={<AuthPage />} />
       <Route path="/register" element={<AuthPage mode="register" />} />
       <Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
+      <Route path="/dashboard/:section" element={<Protected><DashboardPage /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
