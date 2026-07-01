@@ -37,36 +37,42 @@ router.post("/users/:id/suspend", asyncHandler(async (req, res) => {
 router.post("/doctors/:id/verify", asyncHandler(async (req, res) => {
   const doctor = await prisma.doctorProfile.findUnique({ where: { id: req.params.id } });
   if (!doctor) throw new ApiError(404, "Doctor not found");
+  if (doctor.verificationStatus !== VerificationStatus.PENDING) throw new ApiError(409, `Doctor is already ${doctor.verificationStatus.toLowerCase()}`);
   ok(res, await prisma.doctorProfile.update({ where: { id: doctor.id }, data: { verificationStatus: "VERIFIED", verifiedAt: new Date(), verifiedBy: req.user!.id } }), "Doctor verified");
 }));
 
 router.post("/doctors/:id/reject", asyncHandler(async (_req, res) => {
   const doctor = await prisma.doctorProfile.findUnique({ where: { id: _req.params.id } });
   if (!doctor) throw new ApiError(404, "Doctor not found");
+  if (doctor.verificationStatus !== VerificationStatus.PENDING) throw new ApiError(409, `Doctor is already ${doctor.verificationStatus.toLowerCase()}`);
   ok(res, await prisma.doctorProfile.update({ where: { id: doctor.id }, data: { verificationStatus: VerificationStatus.REJECTED, verifiedAt: null, verifiedBy: null } }), "Doctor rejected");
 }));
 
 router.post("/hospitals/:id/verify", asyncHandler(async (req, res) => {
   const hospital = await prisma.hospitalProfile.findUnique({ where: { id: req.params.id } });
   if (!hospital) throw new ApiError(404, "Hospital not found");
+  if (hospital.verificationStatus !== VerificationStatus.PENDING) throw new ApiError(409, `Hospital is already ${hospital.verificationStatus.toLowerCase()}`);
   ok(res, await prisma.hospitalProfile.update({ where: { id: hospital.id }, data: { verificationStatus: "VERIFIED", verifiedAt: new Date(), verifiedBy: req.user!.id } }), "Hospital verified");
 }));
 
 router.post("/hospitals/:id/reject", asyncHandler(async (_req, res) => {
   const hospital = await prisma.hospitalProfile.findUnique({ where: { id: _req.params.id } });
   if (!hospital) throw new ApiError(404, "Hospital not found");
+  if (hospital.verificationStatus !== VerificationStatus.PENDING) throw new ApiError(409, `Hospital is already ${hospital.verificationStatus.toLowerCase()}`);
   ok(res, await prisma.hospitalProfile.update({ where: { id: hospital.id }, data: { verificationStatus: VerificationStatus.REJECTED, verifiedAt: null, verifiedBy: null } }), "Hospital rejected");
 }));
 
 router.post("/laboratories/:id/verify", asyncHandler(async (req, res) => {
   const lab = await prisma.laboratoryProfile.findUnique({ where: { id: req.params.id } });
   if (!lab) throw new ApiError(404, "Laboratory not found");
+  if (lab.verificationStatus !== VerificationStatus.PENDING) throw new ApiError(409, `Laboratory is already ${lab.verificationStatus.toLowerCase()}`);
   ok(res, await prisma.laboratoryProfile.update({ where: { id: lab.id }, data: { verificationStatus: "VERIFIED", verifiedAt: new Date(), verifiedBy: req.user!.id } }), "Laboratory verified");
 }));
 
 router.post("/laboratories/:id/reject", asyncHandler(async (_req, res) => {
   const lab = await prisma.laboratoryProfile.findUnique({ where: { id: _req.params.id } });
   if (!lab) throw new ApiError(404, "Laboratory not found");
+  if (lab.verificationStatus !== VerificationStatus.PENDING) throw new ApiError(409, `Laboratory is already ${lab.verificationStatus.toLowerCase()}`);
   ok(res, await prisma.laboratoryProfile.update({ where: { id: lab.id }, data: { verificationStatus: VerificationStatus.REJECTED, verifiedAt: null, verifiedBy: null } }), "Laboratory rejected");
 }));
 

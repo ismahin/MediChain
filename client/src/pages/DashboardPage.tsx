@@ -99,6 +99,21 @@ function StatusMessage({ message }: { message?: string }) {
   return <div className={`rounded-lg p-3 text-sm font-semibold ${success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{message}</div>;
 }
 
+function StatusPill({ status }: { status?: string }) {
+  const normalized = status ?? "PENDING";
+  const style = {
+    ACTIVE: "bg-green-50 text-green-700",
+    APPROVED: "bg-green-50 text-green-700",
+    VERIFIED: "bg-green-50 text-green-700",
+    PENDING: "bg-amber-50 text-amber-700",
+    REJECTED: "bg-red-50 text-red-700",
+    REVOKED: "bg-red-50 text-red-700",
+    SUSPENDED: "bg-red-50 text-red-700",
+    EXPIRED: "bg-slate-100 text-slate-600"
+  }[normalized] ?? "bg-sky-50 text-medical-700";
+  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${style}`}>{normalized}</span>;
+}
+
 function EmptyState({ text }: { text: string }) {
   return <div className="rounded-lg bg-sky-50 p-6 text-center font-semibold text-slate-500">{text}</div>;
 }
@@ -122,7 +137,7 @@ function AccessRequestsCard({ title, requests }: { title: string; requests: any[
           <div key={request.id} className="rounded-lg border border-sky-100 p-4">
             <div className="font-bold">{request.patient?.user?.fullName ?? "Patient"}</div>
             <div className="text-sm text-slate-600">{request.reason}</div>
-            <div className="mt-2 inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-medical-700">{request.status}</div>
+            <div className="mt-2"><StatusPill status={request.status} /></div>
           </div>
         ))}
       </div>
@@ -209,17 +224,32 @@ function PatientDashboard({ section }: { section: string }) {
       <PageHeading title="Incoming Access Requests" description="Approve only the access needed for the provider's task. Access expires automatically." />
       <div className="space-y-3">
         {(requests.data ?? []).length === 0 && <EmptyState text="No pending access requests." />}
-        {(requests.data ?? []).map((request) => (
-          <div key={request.id} className="rounded-lg border border-sky-100 p-4">
-            <div className="font-bold">{request.requester.fullName}</div>
-            <div className="text-sm text-slate-600">{request.reason}</div>
-            <div className="mt-2 text-xs font-bold text-slate-500">{(request.requestedCategories as string[]).join(", ")}</div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button onClick={() => approve.mutate(request.id)} disabled={approve.isPending}>Approve</Button>
-              <Button onClick={() => reject.mutate(request.id)} disabled={reject.isPending} className="bg-red-600 hover:bg-red-700">Reject</Button>
+        {(requests.data ?? []).map((request) => {
+          const isPending = request.status === "PENDING";
+          const approving = approve.isPending && approve.variables === request.id;
+          const rejecting = reject.isPending && reject.variables === request.id;
+          return (
+            <div key={request.id} className="rounded-lg border border-sky-100 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="font-bold">{request.requester.fullName}</div>
+                  <div className="text-sm text-slate-600">{request.reason}</div>
+                </div>
+                <StatusPill status={request.status} />
+              </div>
+              <div className="mt-2 text-xs font-bold text-slate-500">{(request.requestedCategories as string[]).join(", ")}</div>
+              {request.reviewedAt && <div className="mt-1 text-xs font-semibold text-slate-500">Reviewed {new Date(request.reviewedAt).toLocaleString()}</div>}
+              {isPending ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button onClick={() => approve.mutate(request.id)} disabled={approving || rejecting}>{approving ? "Approving..." : "Approve"}</Button>
+                  <Button onClick={() => reject.mutate(request.id)} disabled={approving || rejecting} className="bg-red-600 hover:bg-red-700">{rejecting ? "Rejecting..." : "Reject"}</Button>
+                </div>
+              ) : (
+                <div className="mt-3 rounded-lg bg-sky-50 p-3 text-sm font-semibold text-slate-600">Action completed. This request is now {String(request.status).toLowerCase()}.</div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
@@ -228,14 +258,28 @@ function PatientDashboard({ section }: { section: string }) {
       <PageHeading title="Shared Access" description="Revoke active permissions when a provider no longer needs access." />
       <div className="space-y-3">
         {(permissions.data ?? []).length === 0 && <EmptyState text="No active shared access." />}
-        {(permissions.data ?? []).map((permission) => (
-          <div key={permission.id} className="rounded-lg border border-sky-100 p-4">
-            <div className="font-bold">{permission.grantee.fullName}</div>
-            <div className="text-sm text-slate-600">{(permission.grantedCategories as string[]).join(", ")}</div>
-            <div className="mt-1 text-xs font-semibold text-slate-500">Expires {new Date(permission.expiresAt).toLocaleString()}</div>
-            <Button onClick={() => revoke.mutate(permission.id)} disabled={revoke.isPending} className="mt-3 bg-red-600 hover:bg-red-700">Revoke</Button>
-          </div>
-        ))}
+        {(permissions.data ?? []).map((permission) => {
+          const active = permission.status === "ACTIVE" && new Date(permission.expiresAt) > new Date();
+          const revoking = revoke.isPending && revoke.variables === permission.id;
+          return (
+            <div key={permission.id} className="rounded-lg border border-sky-100 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="font-bold">{permission.grantee.fullName}</div>
+                  <div className="text-sm text-slate-600">{(permission.grantedCategories as string[]).join(", ")}</div>
+                </div>
+                <StatusPill status={active ? permission.status : permission.status === "ACTIVE" ? "EXPIRED" : permission.status} />
+              </div>
+              <div className="mt-1 text-xs font-semibold text-slate-500">Expires {new Date(permission.expiresAt).toLocaleString()}</div>
+              {permission.revokedAt && <div className="mt-1 text-xs font-semibold text-slate-500">Revoked {new Date(permission.revokedAt).toLocaleString()}</div>}
+              {active ? (
+                <Button onClick={() => revoke.mutate(permission.id)} disabled={revoking} className="mt-3 bg-red-600 hover:bg-red-700">{revoking ? "Revoking..." : "Revoke"}</Button>
+              ) : (
+                <div className="mt-3 rounded-lg bg-sky-50 p-3 text-sm font-semibold text-slate-600">No further action is available for this permission.</div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </Card>
   );
@@ -535,9 +579,9 @@ function AdminDashboard({ section }: { section: string }) {
     const content =
       section === "overview" ? overviewView :
       section === "users" ? usersView :
-      section === "doctor-verification" ? <VerificationPanel title="Doctor Verification" users={doctors} type="doctors" onAction={verify.mutate} /> :
-      section === "hospital-verification" ? <VerificationPanel title="Hospital Verification" users={hospitals} type="hospitals" onAction={verify.mutate} /> :
-      section === "laboratory-verification" ? <VerificationPanel title="Laboratory Verification" users={laboratories} type="laboratories" onAction={verify.mutate} /> :
+      section === "doctor-verification" ? <VerificationPanel title="Doctor Verification" users={doctors} type="doctors" onAction={verify.mutate} pendingAction={verify.variables} /> :
+      section === "hospital-verification" ? <VerificationPanel title="Hospital Verification" users={hospitals} type="hospitals" onAction={verify.mutate} pendingAction={verify.variables} /> :
+      section === "laboratory-verification" ? <VerificationPanel title="Laboratory Verification" users={laboratories} type="laboratories" onAction={verify.mutate} pendingAction={verify.variables} /> :
       section === "medical-records-monitor" ? recordsView :
       section === "blockchain-monitor" ? blockchainView :
       section === "emergency-access-audit" ? emergencyView :
@@ -552,21 +596,41 @@ function AdminTable({ children, empty }: { children: React.ReactNode; empty: str
   return <div className="overflow-x-auto"><table className="w-full text-left text-sm"><tbody>{children}</tbody></table></div>;
 }
 
-function VerificationPanel({ title, users, type, onAction }: { title: string; users: any[]; type: string; onAction: (input: { type: string; id: string; action: "verify" | "reject" }) => void }) {
+function VerificationPanel({
+  title,
+  users,
+  type,
+  onAction,
+  pendingAction
+}: {
+  title: string;
+  users: any[];
+  type: string;
+  onAction: (input: { type: string; id: string; action: "verify" | "reject" }) => void;
+  pendingAction?: { type: string; id: string; action: "verify" | "reject" };
+}) {
   return (
     <Card>
       <h2 className="mb-4 text-xl font-black">{title}</h2>
       <AdminTable empty="No users in this verification queue.">
         {users.map((user) => {
           const profile = user.doctorProfile ?? user.hospitalProfile ?? user.laboratoryProfile;
+          const status = profile?.verificationStatus ?? "N/A";
+          const pending = pendingAction?.id === profile?.id;
           return (
             <tr key={user.id} className="border-t border-sky-100">
               <td className="py-3 font-bold">{user.fullName}</td>
               <td>{user.email}</td>
-              <td>{profile?.verificationStatus ?? "N/A"}</td>
+              <td><StatusPill status={status} /></td>
               <td className="flex flex-wrap gap-2 py-2">
-                <Button type="button" onClick={() => onAction({ type, id: profile.id, action: "verify" })} className="bg-green-600 hover:bg-green-700">Verify</Button>
-                <Button type="button" onClick={() => onAction({ type, id: profile.id, action: "reject" })} className="bg-red-600 hover:bg-red-700">Reject</Button>
+                {status === "PENDING" ? (
+                  <>
+                    <Button type="button" onClick={() => onAction({ type, id: profile.id, action: "verify" })} disabled={pending} className="bg-green-600 hover:bg-green-700">{pending && pendingAction?.action === "verify" ? "Verifying..." : "Verify"}</Button>
+                    <Button type="button" onClick={() => onAction({ type, id: profile.id, action: "reject" })} disabled={pending} className="bg-red-600 hover:bg-red-700">{pending && pendingAction?.action === "reject" ? "Rejecting..." : "Reject"}</Button>
+                  </>
+                ) : (
+                  <span className="rounded-lg bg-sky-50 px-3 py-2 text-sm font-semibold text-slate-600">No action needed</span>
+                )}
               </td>
             </tr>
           );
@@ -603,7 +667,8 @@ function RecordList({ title = "Medical Records", description, records, empty = "
             </div>
             <div className="mt-3 break-all rounded-lg bg-slate-50 p-3 text-xs text-slate-600">SHA-256: {record.fileHash}</div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {onVerify && <Button onClick={() => onVerify(record.id)}><ShieldCheck size={16} /> Verify integrity</Button>}
+              {onVerify && record.blockchainStatus !== "VERIFIED" && <Button onClick={() => onVerify(record.id)}><ShieldCheck size={16} /> Verify integrity</Button>}
+              {onVerify && record.blockchainStatus === "VERIFIED" && <span className="inline-flex items-center gap-1 rounded-lg bg-green-50 px-4 py-2 font-bold text-green-700"><ShieldCheck size={16} /> Integrity verified</span>}
               {record.blockchainTxHash && <a className="rounded-lg bg-sky-50 px-4 py-2 font-bold text-medical-700" href={`${explorerBase}/tx/${record.blockchainTxHash}`} target="_blank" rel="noreferrer">Open explorer</a>}
             </div>
           </div>
