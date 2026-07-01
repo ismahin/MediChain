@@ -82,8 +82,15 @@ export function DashboardPage() {
   );
 }
 
-function StatsGrid({ stats }: { stats: Record<string, number | string | undefined> }) {
-  return <div className="grid gap-4 md:grid-cols-4">{Object.entries(stats).map(([key, value]) => <Card key={key}><div className="text-2xl font-black text-medical-700">{value ?? 0}</div><div className="mt-1 text-sm font-semibold capitalize text-slate-500">{key.replaceAll(/([A-Z])/g, " $1")}</div></Card>)}</div>;
+function formatStatValue(value: unknown) {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === "number" || typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return 0;
+}
+
+function StatsGrid({ stats }: { stats: Record<string, unknown> }) {
+  return <div className="grid gap-4 md:grid-cols-4">{Object.entries(stats).map(([key, value]) => <Card key={key}><div className="text-2xl font-black text-medical-700">{formatStatValue(value)}</div><div className="mt-1 text-sm font-semibold capitalize text-slate-500">{key.replaceAll(/([A-Z])/g, " $1")}</div></Card>)}</div>;
 }
 
 function StatusMessage({ message }: { message?: string }) {
