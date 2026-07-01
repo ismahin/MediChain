@@ -1,0 +1,7 @@
+{
+  "contractName": "MediChainHealthRecords",
+  "address": "",
+  "network": "sepolia",
+  "chainId": 11155111,
+  "note": "Run npm run contract:deploy:sepolia after filling contracts/.env."
+}

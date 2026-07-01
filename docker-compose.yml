@@ -1,0 +1,22 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: medichain-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: medichain_root
+      MYSQL_DATABASE: medichain
+      MYSQL_USER: medichain
+      MYSQL_PASSWORD: medichain_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - medichain_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-umedichain", "-pmedichain_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  medichain_mysql:
