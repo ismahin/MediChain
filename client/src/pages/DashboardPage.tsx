@@ -10,6 +10,13 @@ import { useMetaMask } from "../hooks/useMetaMask";
 import type { MedicalRecord, Role, User } from "../types";
 import { BlockchainStatusBadge, Button, Card, Input, SecurityNote, Select, Textarea } from "../components/ui";
 
+type PatientSummary = {
+  id: string;
+  healthId: string;
+  bloodGroup?: string;
+  user: Pick<User, "id" | "fullName" | "email">;
+};
+
 const nav: Record<Role, string[]> = {
   PATIENT: ["Overview", "Medical Timeline", "Prescriptions", "Diagnostic Reports", "Access Requests", "Shared Access", "Blockchain Verification", "Emergency Profile", "Notifications", "Settings"],
   DOCTOR: ["Overview", "Patient Search", "Access Requests", "My Consultations", "Create Prescription", "Medical Records", "Blockchain Activity", "Profile & Verification"],
@@ -66,6 +73,52 @@ function StatsGrid({ stats }: { stats: Record<string, number | string | undefine
   return <div className="grid gap-4 md:grid-cols-4">{Object.entries(stats).map(([key, value]) => <Card key={key}><div className="text-2xl font-black text-medical-700">{value ?? 0}</div><div className="mt-1 text-sm font-semibold capitalize text-slate-500">{key.replaceAll(/([A-Z])/g, " $1")}</div></Card>)}</div>;
 }
 
+function StatusMessage({ message }: { message?: string }) {
+  if (!message) return null;
+  const success = !message.toLowerCase().includes("error") && !message.toLowerCase().includes("failed") && !message.toLowerCase().includes("not granted");
+  return <div className={`rounded-lg p-3 text-sm font-semibold ${success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{message}</div>;
+}
+
+function PatientSearchCard({
+  title,
+  query,
+  setQuery,
+  patients,
+  selectedPatient,
+  onSelect,
+  onRequestAccess,
+  requesting
+}: {
+  title: string;
+  query: string;
+  setQuery: (value: string) => void;
+  patients: PatientSummary[];
+  selectedPatient?: PatientSummary | null;
+  onSelect: (patient: PatientSummary) => void;
+  onRequestAccess: (patientId: string) => void;
+  requesting?: boolean;
+}) {
+  return (
+    <Card>
+      <h2 className="mb-4 flex items-center gap-2 text-xl font-black"><Search />{title}</h2>
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by Health ID, e.g. MCH-2026-000001" />
+      {selectedPatient && <div className="mt-3 rounded-lg bg-green-50 p-3 text-sm font-semibold text-green-700">Selected: {selectedPatient.user.fullName} ({selectedPatient.healthId})</div>}
+      <div className="mt-4 space-y-3">
+        {patients.map((patient) => (
+          <div key={patient.id} className="rounded-lg bg-sky-50 p-3">
+            <div className="font-bold">{patient.user.fullName}</div>
+            <div className="text-sm text-slate-600">{patient.healthId}</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button type="button" onClick={() => onSelect(patient)} className="bg-teal-600 hover:bg-teal-700">Select Patient</Button>
+              <Button type="button" onClick={() => onRequestAccess(patient.id)} disabled={requesting}>Request Access</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function PatientDashboard() {
   const qc = useQueryClient();
   const profile = useQuery({ queryKey: ["patient-profile"], queryFn: () => unwrap<any>(api.get("/patients/profile")) });
@@ -102,19 +155,30 @@ function PatientDashboard() {
 
 function DoctorDashboard() {
   const qc = useQueryClient();
+  const [message, setMessage] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
   const dashboard = useQuery({ queryKey: ["doctor-dashboard"], queryFn: () => unwrap<any>(api.get("/doctors/dashboard")) });
   const [query, setQuery] = useState("MCH-2026-000001");
-  const patients = useQuery({ queryKey: ["doctor-search", query], queryFn: () => unwrap<any[]>(api.get(`/doctors/patients/search?q=${encodeURIComponent(query)}`)), enabled: query.length > 2 });
+  const patients = useQuery({ queryKey: ["doctor-search", query], queryFn: () => unwrap<PatientSummary[]>(api.get(`/doctors/patients/search?q=${encodeURIComponent(query)}`)), enabled: query.length > 2 });
   const requests = useQuery({ queryKey: ["doctor-requests"], queryFn: () => unwrap<any[]>(api.get("/doctors/access-requests")) });
   const prescriptions = useQuery({ queryKey: ["doctor-prescriptions"], queryFn: () => unwrap<any[]>(api.get("/doctors/prescriptions")) });
-  const requestAccess = useMutation({ mutationFn: (patientId: string) => unwrap(api.post(`/doctors/patients/${patientId}/access-request`, { requestedCategories: ["Full medical history", "Prescriptions only", "Diagnostic reports only"], reason: "Clinical review and treatment", requestedDurationHours: 72 })), onSuccess: () => void qc.invalidateQueries() });
-  const createPrescription = useMutation({ mutationFn: (payload: any) => unwrap(api.post("/doctors/prescriptions", payload)), onSuccess: () => void qc.invalidateQueries() });
+  const requestAccess = useMutation({
+    mutationFn: (patientId: string) => unwrap(api.post(`/doctors/patients/${patientId}/access-request`, { requestedCategories: ["Full medical history", "Prescriptions only", "Diagnostic reports only"], reason: "Clinical review and treatment", requestedDurationHours: 72 })),
+    onSuccess: () => { setMessage("Access request sent. Log in as the patient to approve it."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Access request failed")
+  });
+  const createPrescription = useMutation({
+    mutationFn: (payload: any) => unwrap(api.post("/doctors/prescriptions", payload)),
+    onSuccess: () => { setMessage("Prescription saved. The patient can now see it in their records."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Prescription creation failed")
+  });
   return (
     <>
+      <StatusMessage message={message} />
       <StatsGrid stats={dashboard.data ?? {}} />
       <section id="patient-search" className="grid gap-4 lg:grid-cols-2">
-        <Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><Search />Patient Search</h2><Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by Health ID" /><div className="mt-4 space-y-3">{(patients.data ?? []).map((p) => <div key={p.id} className="rounded-lg bg-sky-50 p-3"><div className="font-bold">{p.user.fullName}</div><div className="text-sm text-slate-600">{p.healthId}</div><Button onClick={() => requestAccess.mutate(p.id)} className="mt-3">Request Access</Button></div>)}</div></Card>
-        <PrescriptionForm onSubmit={(payload) => createPrescription.mutate(payload)} />
+        <PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} />
+        <PrescriptionForm selectedPatient={selectedPatient} onSubmit={(payload) => createPrescription.mutate(payload)} saving={createPrescription.isPending} />
       </section>
       <section id="access-requests"><Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card></section>
       <section id="my-consultations"><Card><h2 className="text-xl font-black">Recent Prescriptions</h2>{(prescriptions.data ?? []).map((p) => <div key={p.id} className="border-t border-sky-100 py-3"><b>{p.diagnosis}</b> for {p.patient.user.fullName}</div>)}</Card></section>
@@ -122,35 +186,72 @@ function DoctorDashboard() {
   );
 }
 
-function PrescriptionForm({ onSubmit }: { onSubmit: (payload: any) => void }) {
+function PrescriptionForm({ selectedPatient, onSubmit, saving }: { selectedPatient?: PatientSummary | null; onSubmit: (payload: any) => void; saving?: boolean }) {
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!selectedPatient) return;
     const form = Object.fromEntries(new FormData(event.currentTarget).entries()) as Record<string, string>;
-    onSubmit({ patientId: form.patientId, diagnosis: form.diagnosis, notes: form.notes, followUpDate: form.followUpDate, medications: [{ medicineName: form.medicineName, dosage: form.dosage, frequency: form.frequency, duration: form.duration, instructions: form.instructions }] });
+    onSubmit({ patientId: selectedPatient.id, diagnosis: form.diagnosis, notes: form.notes, followUpDate: form.followUpDate, medications: [{ medicineName: form.medicineName, dosage: form.dosage, frequency: form.frequency, duration: form.duration, instructions: form.instructions }] });
   }
-  return <Card><h2 className="text-xl font-black">Create Prescription</h2><form onSubmit={submit} className="mt-4 grid gap-3"><Input name="patientId" placeholder="Patient profile ID after approved access" required /><Input name="diagnosis" placeholder="Diagnosis" required /><Input name="medicineName" placeholder="Medication name" required /><Input name="dosage" placeholder="Dosage" required /><Input name="frequency" placeholder="Frequency" required /><Input name="duration" placeholder="Duration" required /><Input name="followUpDate" type="date" /><Textarea name="instructions" placeholder="Instructions" /><Textarea name="notes" placeholder="Clinical notes" /><Button>Save Prescription</Button></form></Card>;
+  return <Card><h2 className="text-xl font-black">Create Prescription</h2>{!selectedPatient && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. If saving is blocked, ask the patient to approve your access request.</div>}<form onSubmit={submit} className="mt-4 grid gap-3"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Input name="diagnosis" placeholder="Diagnosis" required /><Input name="medicineName" placeholder="Medication name" required /><Input name="dosage" placeholder="Dosage" required /><Input name="frequency" placeholder="Frequency" required /><Input name="duration" placeholder="Duration" required /><Input name="followUpDate" type="date" /><Textarea name="instructions" placeholder="Instructions" /><Textarea name="notes" placeholder="Clinical notes" /><Button disabled={!selectedPatient || saving}>{saving ? "Saving..." : "Save Prescription"}</Button></form></Card>;
 }
 
 function HospitalDashboard() {
+  const qc = useQueryClient();
+  const [message, setMessage] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
+  const [query, setQuery] = useState("MCH-2026-000001");
   const dashboard = useQuery({ queryKey: ["hospital-dashboard"], queryFn: () => unwrap<any>(api.get("/hospitals/dashboard")) });
-  const createAdmission = useMutation({ mutationFn: (payload: any) => unwrap(api.post("/hospitals/admissions", payload)) });
-  return <><StatsGrid stats={dashboard.data ?? {}} /><RecordForm title="Create Admission Record" fields={["patientId", "reason", "ward", "notes"]} onSubmit={(p) => createAdmission.mutate(p)} /></>;
+  const patients = useQuery({ queryKey: ["hospital-search", query], queryFn: () => unwrap<PatientSummary[]>(api.get(`/hospitals/patients/search?q=${encodeURIComponent(query)}`)), enabled: query.length > 2 });
+  const requests = useQuery({ queryKey: ["hospital-requests"], queryFn: () => unwrap<any[]>(api.get("/hospitals/access-requests")) });
+  const requestAccess = useMutation({
+    mutationFn: (patientId: string) => unwrap(api.post(`/hospitals/patients/${patientId}/access-request`, { requestedCategories: ["Full medical history"], reason: "Hospital admission and care documentation", requestedDurationHours: 168 })),
+    onSuccess: () => { setMessage("Hospital access request sent. Patient approval is required before saving records."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Access request failed")
+  });
+  const createAdmission = useMutation({
+    mutationFn: (payload: any) => unwrap(api.post("/hospitals/admissions", payload)),
+    onSuccess: () => { setMessage("Admission record saved."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Record save failed")
+  });
+  return <><StatusMessage message={message} /><StatsGrid stats={dashboard.data ?? {}} /><section className="grid gap-4 lg:grid-cols-2"><PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} /><RecordForm title="Create Admission Record" selectedPatient={selectedPatient} fields={["reason", "ward", "notes"]} onSubmit={(p) => createAdmission.mutate(p)} saving={createAdmission.isPending} /></section><section id="access-requests"><Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card></section></>;
 }
 
 function LabDashboard() {
   const qc = useQueryClient();
+  const [message, setMessage] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null);
+  const [query, setQuery] = useState("MCH-2026-000001");
   const dashboard = useQuery({ queryKey: ["lab-dashboard"], queryFn: () => unwrap<any>(api.get("/laboratories/dashboard")) });
+  const patients = useQuery({ queryKey: ["lab-search", query], queryFn: () => unwrap<PatientSummary[]>(api.get(`/laboratories/patients/search?q=${encodeURIComponent(query)}`)), enabled: query.length > 2 });
+  const requests = useQuery({ queryKey: ["lab-requests"], queryFn: () => unwrap<any[]>(api.get("/laboratories/access-requests")) });
   const reports = useQuery({ queryKey: ["lab-reports"], queryFn: () => unwrap<MedicalRecord[]>(api.get("/laboratories/reports")) });
-  const upload = useMutation({ mutationFn: (data: FormData) => unwrap(api.post("/laboratories/reports/upload", data, { headers: { "Content-Type": "multipart/form-data" } })), onSuccess: () => void qc.invalidateQueries() });
+  const requestAccess = useMutation({
+    mutationFn: (patientId: string) => unwrap(api.post(`/laboratories/patients/${patientId}/access-request`, { requestedCategories: ["Diagnostic reports only"], reason: "Diagnostic report upload and verification", requestedDurationHours: 168 })),
+    onSuccess: () => { setMessage("Laboratory access request sent. Patient approval is required before uploading reports."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Access request failed")
+  });
+  const upload = useMutation({
+    mutationFn: (data: FormData) => unwrap(api.post("/laboratories/reports/upload", data, { headers: { "Content-Type": "multipart/form-data" } })),
+    onSuccess: () => { setMessage("Report uploaded and saved."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Report upload failed")
+  });
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!selectedPatient) {
+      setMessage("Select a patient before uploading a report.");
+      return;
+    }
     const data = new FormData(event.currentTarget);
+    data.set("patientId", selectedPatient.id);
     upload.mutate(data);
   }
   return (
     <>
+      <StatusMessage message={message} />
       <StatsGrid stats={dashboard.data ?? {}} />
-      <section id="upload-diagnostic-report"><Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><UploadCloud />Upload Diagnostic Report</h2><form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><Input name="patientId" placeholder="Patient profile ID with approved access" required /><Select name="category"><option>Blood test</option><option>Pathology</option><option>X-ray</option><option>MRI</option><option>CT scan</option><option>Ultrasound</option><option>Other</option></Select><Input name="title" placeholder="Report title" required /><Input name="testDate" type="date" required /><Input name="file" type="file" accept="application/pdf,image/png,image/jpeg" required /><Textarea name="resultSummary" placeholder="Result summary" /><Button>Upload and Anchor</Button></form></Card></section>
+      <section id="patient-search" className="grid gap-4 lg:grid-cols-2"><PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} /><Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><UploadCloud />Upload Diagnostic Report</h2>{!selectedPatient && <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. The patient must approve diagnostic report access.</div>}<form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Select name="category"><option>Blood test</option><option>Pathology</option><option>X-ray</option><option>MRI</option><option>CT scan</option><option>Ultrasound</option><option>Other</option></Select><Input name="title" placeholder="Report title" required /><Input name="testDate" type="date" required /><Input name="file" type="file" accept="application/pdf,image/png,image/jpeg" required /><Textarea name="resultSummary" placeholder="Result summary" /><Button disabled={!selectedPatient || upload.isPending}>{upload.isPending ? "Uploading..." : "Upload and Anchor"}</Button></form></Card></section>
+      <section id="access-requests"><Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card></section>
       <RecordList records={reports.data ?? []} />
     </>
   );
@@ -179,12 +280,13 @@ function verificationCell(user: any, verify: (input: { type: string; id: string 
   return <Button onClick={() => verify({ type, id: profile.id })}>Verify</Button>;
 }
 
-function RecordForm({ title, fields, onSubmit }: { title: string; fields: string[]; onSubmit: (payload: any) => void }) {
+function RecordForm({ title, selectedPatient, fields, onSubmit, saving }: { title: string; selectedPatient?: PatientSummary | null; fields: string[]; onSubmit: (payload: any) => void; saving?: boolean }) {
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit(Object.fromEntries(new FormData(event.currentTarget).entries()));
+    if (!selectedPatient) return;
+    onSubmit({ ...Object.fromEntries(new FormData(event.currentTarget).entries()), patientId: selectedPatient.id });
   }
-  return <Card><h2 className="text-xl font-black">{title}</h2><form onSubmit={submit} className="mt-4 grid gap-3 md:grid-cols-2">{fields.map((field) => <Input key={field} name={field} placeholder={field} required={field !== "notes"} />)}<Button>Save Record</Button></form></Card>;
+  return <Card><h2 className="text-xl font-black">{title}</h2>{!selectedPatient && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first and make sure access is approved.</div>}<form onSubmit={submit} className="mt-4 grid gap-3 md:grid-cols-2"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" />{fields.map((field) => <Input key={field} name={field} placeholder={field} required={field !== "notes"} />)}<Button disabled={!selectedPatient || saving}>{saving ? "Saving..." : "Save Record"}</Button></form></Card>;
 }
 
 function RecordList({ records, onVerify }: { records: MedicalRecord[]; onVerify?: (id: string) => void }) {

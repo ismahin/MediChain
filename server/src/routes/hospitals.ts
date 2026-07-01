@@ -47,6 +47,57 @@ router.get(
   })
 );
 
+router.get(
+  "/patients/search",
+  asyncHandler(async (req, res) => {
+    await verifiedHospital(req.user!.id);
+    const query = String(req.query.q ?? "");
+    const patients = await prisma.patientProfile.findMany({
+      where: {
+        OR: [{ healthId: { contains: query } }, { user: { fullName: { contains: query } } }]
+      },
+      include: { user: { select: { id: true, fullName: true, email: true } } },
+      take: 10
+    });
+    ok(res, patients);
+  })
+);
+
+router.post(
+  "/patients/:patientId/access-request",
+  asyncHandler(async (req, res) => {
+    await verifiedHospital(req.user!.id);
+    const body = z.object({
+      requestedCategories: z.array(z.string()).min(1),
+      reason: z.string().min(5),
+      requestedDurationHours: z.number().int().min(1).max(720)
+    }).parse(req.body);
+    const request = await prisma.accessRequest.create({
+      data: { patientId: req.params.patientId, requesterUserId: req.user!.id, requesterRole: Role.HOSPITAL, ...body }
+    });
+    const patient = await prisma.patientProfile.findUnique({ where: { id: req.params.patientId } });
+    if (patient) {
+      await prisma.notification.create({
+        data: {
+          userId: patient.userId,
+          title: "Hospital access request",
+          message: `${req.user!.fullName} requested access to ${body.requestedCategories.join(", ")}.`,
+          relatedEntityType: "AccessRequest",
+          relatedEntityId: request.id
+        }
+      });
+    }
+    ok(res.status(201), request, "Hospital access request sent");
+  })
+);
+
+router.get(
+  "/access-requests",
+  asyncHandler(async (req, res) => {
+    ok(res, await prisma.accessRequest.findMany({ where: { requesterUserId: req.user!.id }, include: { patient: { include: { user: true } } }, orderBy: { createdAt: "desc" } }));
+  })
+);
+
 router.post(
   "/patients/register",
   asyncHandler(async (req, res) => {
