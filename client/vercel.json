@@ -7,6 +7,10 @@
     {
       "source": "/health",
       "destination": "http://159.223.156.66:5000/health"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
