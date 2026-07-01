@@ -259,25 +259,96 @@ function LabDashboard() {
 
 function AdminDashboard() {
   const qc = useQueryClient();
+  const [message, setMessage] = useState("");
   const dashboard = useQuery({ queryKey: ["admin-dashboard"], queryFn: () => unwrap<any>(api.get("/admin/dashboard")) });
   const users = useQuery({ queryKey: ["admin-users"], queryFn: () => unwrap<any[]>(api.get("/admin/users")) });
-  const verify = useMutation({ mutationFn: ({ type, id }: { type: string; id: string }) => unwrap(api.post(`/admin/${type}/${id}/verify`)), onSuccess: () => void qc.invalidateQueries() });
+  const records = useQuery({ queryKey: ["admin-records"], queryFn: () => unwrap<any[]>(api.get("/admin/medical-records")) });
+  const transactions = useQuery({ queryKey: ["admin-blockchain"], queryFn: () => unwrap<any[]>(api.get("/admin/blockchain-transactions")) });
+  const emergencyLogs = useQuery({ queryKey: ["admin-emergency"], queryFn: () => unwrap<any[]>(api.get("/admin/emergency-logs")) });
+  const auditLogs = useQuery({ queryKey: ["admin-audit"], queryFn: () => unwrap<any[]>(api.get("/admin/audit-logs")) });
+  const accessPermissions = useQuery({ queryKey: ["admin-access-permissions"], queryFn: () => unwrap<any[]>(api.get("/admin/access-permissions")) });
+  const verify = useMutation({
+    mutationFn: ({ type, id, action }: { type: string; id: string; action: "verify" | "reject" }) => unwrap(api.post(`/admin/${type}/${id}/${action}`)),
+    onSuccess: (_data, variables) => { setMessage(`${variables.type.slice(0, -1)} ${variables.action} action completed.`); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Verification action failed")
+  });
+  const suspend = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) => unwrap(api.post(`/admin/users/${id}/suspend`, { isActive })),
+    onSuccess: (_data, variables) => { setMessage(variables.isActive ? "User activated." : "User suspended."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "User status update failed")
+  });
   const chartData = Object.entries(dashboard.data ?? {}).map(([name, value]) => ({ name, value: Number(value) || 0 }));
+  const doctors = (users.data ?? []).filter((user) => user.role === "DOCTOR");
+  const hospitals = (users.data ?? []).filter((user) => user.role === "HOSPITAL");
+  const laboratories = (users.data ?? []).filter((user) => user.role === "LABORATORY");
   return (
     <>
-      <StatsGrid stats={dashboard.data ?? {}} />
-      <Card><h2 className="text-xl font-black">System Analytics</h2><div className="h-64"><ResponsiveContainer><AreaChart data={chartData}><XAxis dataKey="name" hide /><Tooltip /><Area dataKey="value" fill="#1689e8" stroke="#096fc7" /></AreaChart></ResponsiveContainer></div></Card>
-      <Card><h2 className="mb-4 text-xl font-black">Users and Verification</h2><div className="overflow-x-auto"><table className="w-full text-left text-sm"><tbody>{(users.data ?? []).map((u) => <tr key={u.id} className="border-t border-sky-100"><td className="py-3 font-bold">{u.fullName}</td><td>{u.role}</td><td>{u.email}</td><td>{verificationCell(u, verify.mutate)}</td></tr>)}</tbody></table></div></Card>
+      <StatusMessage message={message} />
+      <section id="overview" className="space-y-4">
+        <StatsGrid stats={dashboard.data ?? {}} />
+        <Card><h2 className="text-xl font-black">System Analytics</h2><div className="h-64"><ResponsiveContainer><AreaChart data={chartData}><XAxis dataKey="name" hide /><Tooltip /><Area dataKey="value" fill="#1689e8" stroke="#096fc7" /></AreaChart></ResponsiveContainer></div></Card>
+      </section>
+
+      <section id="users">
+        <Card><h2 className="mb-4 text-xl font-black">Users</h2><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-slate-500"><th className="py-2">Name</th><th>Role</th><th>Email</th><th>Status</th><th>Action</th></tr></thead><tbody>{(users.data ?? []).map((u) => <tr key={u.id} className="border-t border-sky-100"><td className="py-3 font-bold">{u.fullName}</td><td>{u.role}</td><td>{u.email}</td><td>{u.isActive ? <span className="font-bold text-green-700">Active</span> : <span className="font-bold text-red-700">Suspended</span>}</td><td><Button type="button" onClick={() => suspend.mutate({ id: u.id, isActive: !u.isActive })} className={u.isActive ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}>{u.isActive ? "Suspend" : "Activate"}</Button></td></tr>)}</tbody></table></div></Card>
+      </section>
+
+      <section id="doctor-verification"><VerificationPanel title="Doctor Verification" users={doctors} type="doctors" onAction={verify.mutate} /></section>
+      <section id="hospital-verification"><VerificationPanel title="Hospital Verification" users={hospitals} type="hospitals" onAction={verify.mutate} /></section>
+      <section id="laboratory-verification"><VerificationPanel title="Laboratory Verification" users={laboratories} type="laboratories" onAction={verify.mutate} /></section>
+
+      <section id="medical-records-monitor">
+        <Card><h2 className="mb-4 text-xl font-black">Medical Records Monitor</h2><AdminTable empty="No medical records yet.">{(records.data ?? []).map((record) => <tr key={record.id} className="border-t border-sky-100"><td className="py-3 font-bold">{record.title}</td><td>{record.recordType}</td><td>{record.patient?.healthId}</td><td>{record.creator?.fullName}</td><td><BlockchainStatusBadge status={record.blockchainStatus} /></td></tr>)}</AdminTable></Card>
+      </section>
+
+      <section id="blockchain-monitor">
+        <Card><h2 className="mb-4 text-xl font-black">Blockchain Monitor</h2><AdminTable empty="No blockchain transactions yet.">{(transactions.data ?? []).map((tx) => <tr key={tx.id} className="border-t border-sky-100"><td className="py-3 font-bold">{tx.transactionType}</td><td>{tx.status}</td><td>{tx.blockNumber ?? "-"}</td><td className="max-w-[240px] truncate">{tx.txHash ?? tx.errorMessage ?? "-"}</td><td>{new Date(tx.createdAt).toLocaleString()}</td></tr>)}</AdminTable></Card>
+      </section>
+
+      <section id="emergency-access-audit">
+        <Card><h2 className="mb-4 text-xl font-black">Emergency Access Audit</h2><AdminTable empty="No emergency access events.">{(emergencyLogs.data ?? []).map((log) => <tr key={log.id} className="border-t border-sky-100"><td className="py-3 font-bold">{log.requester?.fullName}</td><td>{log.patient?.user?.fullName}</td><td>{log.reason}</td><td>{new Date(log.createdAt).toLocaleString()}</td><td className="max-w-[220px] truncate">{log.blockchainTxHash ?? "-"}</td></tr>)}</AdminTable></Card>
+      </section>
+
+      <section id="access-audit-logs" className="grid gap-4 xl:grid-cols-2">
+        <Card><h2 className="mb-4 text-xl font-black">Access Permissions</h2><AdminTable empty="No access permissions.">{(accessPermissions.data ?? []).map((permission) => <tr key={permission.id} className="border-t border-sky-100"><td className="py-3 font-bold">{permission.grantee?.fullName}</td><td>{permission.patient?.healthId}</td><td>{permission.status}</td><td>{new Date(permission.expiresAt).toLocaleDateString()}</td><td>{permission.blockchainStatus}</td></tr>)}</AdminTable></Card>
+        <Card><h2 className="mb-4 text-xl font-black">Audit Logs</h2><AdminTable empty="No audit logs.">{(auditLogs.data ?? []).map((log) => <tr key={log.id} className="border-t border-sky-100"><td className="py-3 font-bold">{log.action}</td><td>{log.actor?.fullName ?? "System"}</td><td>{log.entityType}</td><td>{new Date(log.createdAt).toLocaleString()}</td><td>{log.ipAddress ?? "-"}</td></tr>)}</AdminTable></Card>
+      </section>
+
+      <section id="system-settings">
+        <Card><h2 className="mb-4 text-xl font-black">System Settings</h2><div className="grid gap-3 text-sm md:grid-cols-2"><div className="rounded-lg bg-sky-50 p-3"><b>API mode:</b> Live through Vercel proxy</div><div className="rounded-lg bg-sky-50 p-3"><b>Blockchain network:</b> SKALE Base Sepolia</div><div className="rounded-lg bg-sky-50 p-3"><b>Files:</b> Stored off-chain under backend uploads</div><div className="rounded-lg bg-sky-50 p-3"><b>Admin file access:</b> Metadata only, no sensitive file opening</div></div></Card>
+      </section>
     </>
   );
 }
 
-function verificationCell(user: any, verify: (input: { type: string; id: string }) => void) {
-  const profile = user.doctorProfile ?? user.hospitalProfile ?? user.laboratoryProfile;
-  if (!profile) return <span className="text-slate-400">No verification required</span>;
-  if (profile.verificationStatus === "VERIFIED") return <span className="font-bold text-green-700">VERIFIED</span>;
-  const type = user.role === "DOCTOR" ? "doctors" : user.role === "HOSPITAL" ? "hospitals" : "laboratories";
-  return <Button onClick={() => verify({ type, id: profile.id })}>Verify</Button>;
+function AdminTable({ children, empty }: { children: React.ReactNode; empty: string }) {
+  const rows = Array.isArray(children) ? children.filter(Boolean) : children;
+  if (Array.isArray(rows) && rows.length === 0) return <div className="rounded-lg bg-sky-50 p-6 text-center font-semibold text-slate-500">{empty}</div>;
+  return <div className="overflow-x-auto"><table className="w-full text-left text-sm"><tbody>{children}</tbody></table></div>;
+}
+
+function VerificationPanel({ title, users, type, onAction }: { title: string; users: any[]; type: string; onAction: (input: { type: string; id: string; action: "verify" | "reject" }) => void }) {
+  return (
+    <Card>
+      <h2 className="mb-4 text-xl font-black">{title}</h2>
+      <AdminTable empty="No users in this verification queue.">
+        {users.map((user) => {
+          const profile = user.doctorProfile ?? user.hospitalProfile ?? user.laboratoryProfile;
+          return (
+            <tr key={user.id} className="border-t border-sky-100">
+              <td className="py-3 font-bold">{user.fullName}</td>
+              <td>{user.email}</td>
+              <td>{profile?.verificationStatus ?? "N/A"}</td>
+              <td className="flex flex-wrap gap-2 py-2">
+                <Button type="button" onClick={() => onAction({ type, id: profile.id, action: "verify" })} className="bg-green-600 hover:bg-green-700">Verify</Button>
+                <Button type="button" onClick={() => onAction({ type, id: profile.id, action: "reject" })} className="bg-red-600 hover:bg-red-700">Reject</Button>
+              </td>
+            </tr>
+          );
+        })}
+      </AdminTable>
+    </Card>
+  );
 }
 
 function RecordForm({ title, selectedPatient, fields, onSubmit, saving }: { title: string; selectedPatient?: PatientSummary | null; fields: string[]; onSubmit: (payload: any) => void; saving?: boolean }) {
