@@ -18,7 +18,7 @@ type PatientSummary = {
 };
 
 const nav: Record<Role, string[]> = {
-  PATIENT: ["Overview", "Medical Timeline", "Prescriptions", "Diagnostic Reports", "Access Requests", "Shared Access", "Blockchain Verification", "Emergency Profile", "Notifications", "Settings"],
+  PATIENT: ["Overview", "My Health Profile", "Medical Timeline", "Prescriptions", "Diagnostic Reports", "Access Requests", "Shared Access", "Blockchain Verification", "Emergency Profile", "Notifications", "Settings"],
   DOCTOR: ["Overview", "Patient Search", "Access Requests", "My Consultations", "Create Prescription", "Medical Records", "Blockchain Activity", "Profile & Verification"],
   HOSPITAL: ["Overview", "Patient Registration", "Admissions", "Discharge Summaries", "Surgery Records", "Medical Documents", "Access Requests", "Staff Doctors", "Blockchain Logs", "Profile"],
   LABORATORY: ["Overview", "Patient Search", "Upload Diagnostic Report", "My Reports", "Verification", "Access Requests", "Blockchain Logs", "Profile"],
@@ -92,6 +92,46 @@ function StatusMessage({ message }: { message?: string }) {
   return <div className={`rounded-lg p-3 text-sm font-semibold ${success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{message}</div>;
 }
 
+function EmptyState({ text }: { text: string }) {
+  return <div className="rounded-lg bg-sky-50 p-6 text-center font-semibold text-slate-500">{text}</div>;
+}
+
+function PageHeading({ title, description }: { title: string; description?: string }) {
+  return (
+    <div className="mb-4">
+      <h2 className="text-xl font-black">{title}</h2>
+      {description && <p className="mt-1 text-sm font-semibold text-slate-500">{description}</p>}
+    </div>
+  );
+}
+
+function AccessRequestsCard({ title, requests }: { title: string; requests: any[] }) {
+  return (
+    <Card>
+      <PageHeading title={title} description="Track requests you sent to patients and wait for approval before creating records." />
+      <div className="space-y-3">
+        {requests.length === 0 && <EmptyState text="No access requests yet." />}
+        {requests.map((request) => (
+          <div key={request.id} className="rounded-lg border border-sky-100 p-4">
+            <div className="font-bold">{request.patient?.user?.fullName ?? "Patient"}</div>
+            <div className="text-sm text-slate-600">{request.reason}</div>
+            <div className="mt-2 inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-medical-700">{request.status}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ProfileStatusCard({ title, status }: { title: string; status?: string }) {
+  return (
+    <Card>
+      <PageHeading title={title} description="Admin verification controls whether this role can create healthcare records." />
+      <div className="rounded-lg bg-sky-50 p-3 font-semibold">Verification status: {status ?? "PENDING"}</div>
+    </Card>
+  );
+}
+
 function PatientSearchCard({
   title,
   query,
@@ -153,16 +193,57 @@ function PatientDashboard({ section }: { section: string }) {
     verifiedRecords: records.data?.filter((r) => ["ANCHORED", "VERIFIED"].includes(r.blockchainStatus)).length
   }), [profile.data, records.data, permissions.data]);
 
-  const accessRequestsView = <Card><h2 className="text-xl font-black">Incoming Access Requests</h2><div className="mt-4 space-y-3">{(requests.data ?? []).map((r) => <div key={r.id} className="rounded-lg bg-sky-50 p-3"><div className="font-bold">{r.requester.fullName}</div><div className="text-sm text-slate-600">{r.reason}</div><div className="mt-3 flex gap-2"><Button onClick={() => approve.mutate(r.id)} disabled={approve.isPending}>Approve</Button><Button onClick={() => reject.mutate(r.id)} disabled={reject.isPending} className="bg-red-600 hover:bg-red-700">Reject</Button></div></div>)}</div></Card>;
-  const sharedAccessView = <Card><h2 className="text-xl font-black">Shared Access</h2><div className="mt-4 space-y-3">{(permissions.data ?? []).map((p) => <div key={p.id} className="rounded-lg bg-sky-50 p-3"><div className="font-bold">{p.grantee.fullName}</div><div className="text-sm text-slate-600">{(p.grantedCategories as string[]).join(", ")}</div><Button onClick={() => revoke.mutate(p.id)} disabled={revoke.isPending} className="mt-3 bg-red-600 hover:bg-red-700">Revoke</Button></div>)}</div></Card>;
+  const allRecords = records.data ?? [];
+  const prescriptionRecords = allRecords.filter((record) => record.recordType === "PRESCRIPTION");
+  const reportRecords = allRecords.filter((record) => record.recordType === "LAB_REPORT");
+  const blockchainRecords = allRecords.filter((record) => Boolean(record.fileHash || record.metadataHash));
+  const accessRequestsView = (
+    <Card>
+      <PageHeading title="Incoming Access Requests" description="Approve only the access needed for the provider's task. Access expires automatically." />
+      <div className="space-y-3">
+        {(requests.data ?? []).length === 0 && <EmptyState text="No pending access requests." />}
+        {(requests.data ?? []).map((request) => (
+          <div key={request.id} className="rounded-lg border border-sky-100 p-4">
+            <div className="font-bold">{request.requester.fullName}</div>
+            <div className="text-sm text-slate-600">{request.reason}</div>
+            <div className="mt-2 text-xs font-bold text-slate-500">{(request.requestedCategories as string[]).join(", ")}</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button onClick={() => approve.mutate(request.id)} disabled={approve.isPending}>Approve</Button>
+              <Button onClick={() => reject.mutate(request.id)} disabled={reject.isPending} className="bg-red-600 hover:bg-red-700">Reject</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+  const sharedAccessView = (
+    <Card>
+      <PageHeading title="Shared Access" description="Revoke active permissions when a provider no longer needs access." />
+      <div className="space-y-3">
+        {(permissions.data ?? []).length === 0 && <EmptyState text="No active shared access." />}
+        {(permissions.data ?? []).map((permission) => (
+          <div key={permission.id} className="rounded-lg border border-sky-100 p-4">
+            <div className="font-bold">{permission.grantee.fullName}</div>
+            <div className="text-sm text-slate-600">{(permission.grantedCategories as string[]).join(", ")}</div>
+            <div className="mt-1 text-xs font-semibold text-slate-500">Expires {new Date(permission.expiresAt).toLocaleString()}</div>
+            <Button onClick={() => revoke.mutate(permission.id)} disabled={revoke.isPending} className="mt-3 bg-red-600 hover:bg-red-700">Revoke</Button>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 
   if (section === "overview") return <StatsGrid stats={stats} />;
-  if (section === "my-health-profile" || section === "settings") return <PatientProfileCard profile={profile.data} />;
-  if (section === "medical-timeline" || section === "prescriptions" || section === "diagnostic-reports" || section === "blockchain-verification") return <RecordList records={records.data ?? []} onVerify={(id) => verify.mutate(id)} />;
+  if (section === "my-health-profile") return <PatientProfileCard profile={profile.data} />;
+  if (section === "medical-timeline") return <RecordList title="Medical Timeline" description="All medical events stored for your health ID." records={allRecords} onVerify={(id) => verify.mutate(id)} />;
+  if (section === "prescriptions") return <RecordList title="Prescriptions" description="Doctor-issued prescriptions and medication instructions." records={prescriptionRecords} empty="No prescriptions yet." onVerify={(id) => verify.mutate(id)} />;
+  if (section === "diagnostic-reports") return <RecordList title="Diagnostic Reports" description="Laboratory reports uploaded with file integrity hashes." records={reportRecords} empty="No diagnostic reports yet." onVerify={(id) => verify.mutate(id)} />;
+  if (section === "blockchain-verification") return <RecordList title="Blockchain Verification" description="Compare local SHA-256 hashes with the anchored blockchain proof." records={blockchainRecords} empty="No records are ready for verification." onVerify={(id) => verify.mutate(id)} />;
   if (section === "access-requests") return accessRequestsView;
   if (section === "shared-access") return sharedAccessView;
   if (section === "emergency-profile") return <EmergencyProfileCard profile={profile.data} />;
-  if (section === "notifications") return <Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><Bell />Notifications</h2>{(notifications.data ?? []).map((n) => <div key={n.id} className="border-t border-sky-100 py-3"><div className="font-bold">{n.title}</div><div className="text-sm text-slate-600">{n.message}</div></div>)}</Card>;
+  if (section === "notifications") return <Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><Bell />Notifications</h2>{(notifications.data ?? []).length === 0 && <EmptyState text="No notifications yet." />}{(notifications.data ?? []).map((n) => <div key={n.id} className="border-t border-sky-100 py-3"><div className="font-bold">{n.title}</div><div className="text-sm text-slate-600">{n.message}</div></div>)}</Card>;
+  if (section === "settings") return <PatientSettingsCard profile={profile.data} />;
   return <StatsGrid stats={stats} />;
 }
 
@@ -174,6 +255,20 @@ function EmergencyProfileCard({ profile }: { profile: any }) {
   return <Card><h2 className="mb-4 text-xl font-black">Emergency Profile</h2><div className="grid gap-3 md:grid-cols-2"><div className="rounded-lg bg-sky-50 p-3"><b>Emergency access:</b> {profile?.emergencyAccessEnabled ? "Enabled" : "Disabled"}</div><div className="rounded-lg bg-sky-50 p-3"><b>Blood group:</b> {profile?.bloodGroup ?? "-"}</div><div className="rounded-lg bg-sky-50 p-3"><b>Allergies:</b> {JSON.stringify(profile?.allergies ?? [])}</div><div className="rounded-lg bg-sky-50 p-3"><b>Emergency contact:</b> {profile?.emergencyContactName} {profile?.emergencyContactPhone}</div></div></Card>;
 }
 
+function PatientSettingsCard({ profile }: { profile: any }) {
+  return (
+    <Card>
+      <PageHeading title="Settings" description="Clinical profile settings are shown here for review. Sensitive edits should be handled through verified provider workflows." />
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-lg bg-sky-50 p-3"><b>Health ID:</b> {profile?.healthId ?? "-"}</div>
+        <div className="rounded-lg bg-sky-50 p-3"><b>Emergency access:</b> {profile?.emergencyAccessEnabled ? "Enabled" : "Disabled"}</div>
+        <div className="rounded-lg bg-sky-50 p-3"><b>Blood group:</b> {profile?.bloodGroup ?? "-"}</div>
+        <div className="rounded-lg bg-sky-50 p-3"><b>Address:</b> {profile?.address ?? "-"}</div>
+      </div>
+    </Card>
+  );
+}
+
 function DoctorDashboard({ section }: { section: string }) {
   const qc = useQueryClient();
   const [message, setMessage] = useState("");
@@ -182,6 +277,7 @@ function DoctorDashboard({ section }: { section: string }) {
   const [query, setQuery] = useState("MCH-2026-000001");
   const patients = useQuery({ queryKey: ["doctor-search", query], queryFn: () => unwrap<PatientSummary[]>(api.get(`/doctors/patients/search?q=${encodeURIComponent(query)}`)), enabled: query.length > 2 });
   const requests = useQuery({ queryKey: ["doctor-requests"], queryFn: () => unwrap<any[]>(api.get("/doctors/access-requests")) });
+  const consultations = useQuery({ queryKey: ["doctor-consultations"], queryFn: () => unwrap<MedicalRecord[]>(api.get("/doctors/consultations")) });
   const prescriptions = useQuery({ queryKey: ["doctor-prescriptions"], queryFn: () => unwrap<any[]>(api.get("/doctors/prescriptions")) });
   const requestAccess = useMutation({
     mutationFn: (patientId: string) => unwrap(api.post(`/doctors/patients/${patientId}/access-request`, { requestedCategories: ["Full medical history", "Prescriptions only", "Diagnostic reports only"], reason: "Clinical review and treatment", requestedDurationHours: 72 })),
@@ -193,19 +289,17 @@ function DoctorDashboard({ section }: { section: string }) {
     onSuccess: () => { setMessage("Prescription saved. The patient can now see it in their records."); void qc.invalidateQueries(); },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Prescription creation failed")
   });
-  const searchAndPrescription = (
-    <section className="grid gap-4 lg:grid-cols-2">
-        <PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} />
-        <PrescriptionForm selectedPatient={selectedPatient} onSubmit={(payload) => createPrescription.mutate(payload)} saving={createPrescription.isPending} />
-      </section>
-  );
+  const patientSearch = <PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} />;
+  const prescriptionRecords = (prescriptions.data ?? []).map((prescription) => prescription.medicalRecord).filter(Boolean) as MedicalRecord[];
   const content =
     section === "overview" ? <StatsGrid stats={dashboard.data ?? {}} /> :
-    section === "patient-search" || section === "create-prescription" ? searchAndPrescription :
-    section === "access-requests" ? <Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card> :
-    section === "my-consultations" || section === "medical-records" ? <Card><h2 className="text-xl font-black">Recent Prescriptions</h2>{(prescriptions.data ?? []).map((p) => <div key={p.id} className="border-t border-sky-100 py-3"><b>{p.diagnosis}</b> for {p.patient.user.fullName}</div>)}</Card> :
-    section === "blockchain-activity" ? <Card><h2 className="text-xl font-black">Blockchain Activity</h2>{(dashboard.data?.transactions ?? []).map((tx: any) => <div key={tx.id} className="border-t border-sky-100 py-3"><b>{tx.transactionType}</b> - {tx.status} - {tx.txHash ?? tx.errorMessage ?? "Pending"}</div>)}</Card> :
-    <Card><h2 className="text-xl font-black">Profile & Verification</h2><div className="mt-3 rounded-lg bg-sky-50 p-3 font-semibold">Verification status: {dashboard.data?.verificationStatus ?? "PENDING"}</div></Card>;
+    section === "patient-search" ? patientSearch :
+    section === "access-requests" ? <AccessRequestsCard title="My Access Requests" requests={requests.data ?? []} /> :
+    section === "my-consultations" ? <RecordList title="My Consultations" description="Consultation records you created after patient approval." records={consultations.data ?? []} empty="No consultations yet." /> :
+    section === "create-prescription" ? <section className="grid gap-4 lg:grid-cols-2">{patientSearch}<PrescriptionForm selectedPatient={selectedPatient} onSubmit={(payload) => createPrescription.mutate(payload)} saving={createPrescription.isPending} /></section> :
+    section === "medical-records" ? <DoctorMedicalRecordsView consultations={consultations.data ?? []} prescriptions={prescriptionRecords} /> :
+    section === "blockchain-activity" ? <BlockchainTransactionsCard title="Blockchain Activity" transactions={dashboard.data?.transactions ?? []} /> :
+    <ProfileStatusCard title="Profile & Verification" status={dashboard.data?.verificationStatus} />;
   return <><StatusMessage message={message} />{content}</>;
 }
 
@@ -219,6 +313,33 @@ function PrescriptionForm({ selectedPatient, onSubmit, saving }: { selectedPatie
   return <Card><h2 className="text-xl font-black">Create Prescription</h2>{!selectedPatient && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. If saving is blocked, ask the patient to approve your access request.</div>}<form onSubmit={submit} className="mt-4 grid gap-3"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Input name="diagnosis" placeholder="Diagnosis" required /><Input name="medicineName" placeholder="Medication name" required /><Input name="dosage" placeholder="Dosage" required /><Input name="frequency" placeholder="Frequency" required /><Input name="duration" placeholder="Duration" required /><Input name="followUpDate" type="date" /><Textarea name="instructions" placeholder="Instructions" /><Textarea name="notes" placeholder="Clinical notes" /><Button disabled={!selectedPatient || saving}>{saving ? "Saving..." : "Save Prescription"}</Button></form></Card>;
 }
 
+function DoctorMedicalRecordsView({ consultations, prescriptions }: { consultations: MedicalRecord[]; prescriptions: MedicalRecord[] }) {
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      <RecordList title="Consultation Records" records={consultations} empty="No consultation records yet." />
+      <RecordList title="Prescription Records" records={prescriptions} empty="No prescription records yet." />
+    </div>
+  );
+}
+
+function BlockchainTransactionsCard({ title, transactions }: { title: string; transactions: any[] }) {
+  return (
+    <Card>
+      <PageHeading title={title} description="Recent backend wallet anchoring attempts and confirmations." />
+      <div className="space-y-3">
+        {transactions.length === 0 && <EmptyState text="No blockchain activity yet." />}
+        {transactions.map((tx) => (
+          <div key={tx.id} className="rounded-lg border border-sky-100 p-4">
+            <div className="font-bold">{tx.transactionType}</div>
+            <div className="text-sm text-slate-600">{tx.status} {tx.blockNumber ? `- block ${tx.blockNumber}` : ""}</div>
+            <div className="mt-2 break-all rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{tx.txHash ?? tx.errorMessage ?? "Pending"}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function HospitalDashboard({ section }: { section: string }) {
   const qc = useQueryClient();
   const [message, setMessage] = useState("");
@@ -227,6 +348,8 @@ function HospitalDashboard({ section }: { section: string }) {
   const dashboard = useQuery({ queryKey: ["hospital-dashboard"], queryFn: () => unwrap<any>(api.get("/hospitals/dashboard")) });
   const patients = useQuery({ queryKey: ["hospital-search", query], queryFn: () => unwrap<PatientSummary[]>(api.get(`/hospitals/patients/search?q=${encodeURIComponent(query)}`)), enabled: query.length > 2 });
   const requests = useQuery({ queryKey: ["hospital-requests"], queryFn: () => unwrap<any[]>(api.get("/hospitals/access-requests")) });
+  const hospitalRecords = useQuery({ queryKey: ["hospital-records"], queryFn: () => unwrap<MedicalRecord[]>(api.get("/hospitals/records")) });
+  const staffDoctors = useQuery({ queryKey: ["hospital-staff-doctors"], queryFn: () => unwrap<any[]>(api.get("/hospitals/staff-doctors")) });
   const requestAccess = useMutation({
     mutationFn: (patientId: string) => unwrap(api.post(`/hospitals/patients/${patientId}/access-request`, { requestedCategories: ["Full medical history"], reason: "Hospital admission and care documentation", requestedDurationHours: 168 })),
     onSuccess: () => { setMessage("Hospital access request sent. Patient approval is required before saving records."); void qc.invalidateQueries(); },
@@ -247,21 +370,80 @@ function HospitalDashboard({ section }: { section: string }) {
       onSuccess: () => { setMessage("Surgery record saved."); void qc.invalidateQueries(); },
       onError: (error) => setMessage(error instanceof Error ? error.message : "Surgery record failed")
     });
+    const registerPatient = useMutation({
+      mutationFn: (payload: any) => unwrap<any>(api.post("/hospitals/patients/register", payload)),
+      onSuccess: (data) => { setMessage(`Patient registered. Temporary password: Patient@12345. Health ID: ${data?.patientProfile?.healthId ?? "created"}`); void qc.invalidateQueries(); },
+      onError: (error) => setMessage(error instanceof Error ? error.message : "Patient registration failed")
+    });
     const patientSearch = <PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} />;
     const activeHospitalMutation = section === "surgery-records" ? createSurgery : section === "discharge-summaries" ? createDischarge : createAdmission;
     const recordForm = <RecordForm title={section === "surgery-records" ? "Create Surgery Record" : section === "discharge-summaries" ? "Create Discharge Summary" : "Create Admission Record"} selectedPatient={selectedPatient} fields={section === "surgery-records" ? ["surgeryName", "surgeon", "notes"] : section === "discharge-summaries" ? ["diagnosis", "summary", "instructions"] : ["reason", "ward", "notes"]} onSubmit={(p) => activeHospitalMutation.mutate(p)} saving={activeHospitalMutation.isPending} />;
   const content =
     section === "overview" ? <StatsGrid stats={dashboard.data ?? {}} /> :
-    section === "patient-registration" ? <PatientRegistrationInfo /> :
-    section === "patient-search" || section === "admissions" || section === "discharge-summaries" || section === "surgery-records" ? <section className="grid gap-4 lg:grid-cols-2">{patientSearch}{recordForm}</section> :
-    section === "access-requests" ? <Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card> :
-    section === "blockchain-logs" ? <Card><h2 className="text-xl font-black">Blockchain Logs</h2>{(dashboard.data?.transactions ?? []).map((tx: any) => <div key={tx.id} className="border-t border-sky-100 py-3"><b>{tx.transactionType}</b> - {tx.status}</div>)}</Card> :
-    <Card><h2 className="text-xl font-black">{section.split("-").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ")}</h2><p className="mt-3 text-slate-600">This hospital page uses the patient search and access-controlled record workflow.</p></Card>;
+    section === "patient-registration" ? <HospitalPatientRegistrationForm onSubmit={(payload) => registerPatient.mutate(payload)} saving={registerPatient.isPending} /> :
+    section === "admissions" || section === "discharge-summaries" || section === "surgery-records" ? <section className="grid gap-4 lg:grid-cols-2">{patientSearch}{recordForm}</section> :
+    section === "medical-documents" ? <HospitalDocumentsPage records={hospitalRecords.data ?? []} /> :
+    section === "access-requests" ? <AccessRequestsCard title="My Access Requests" requests={requests.data ?? []} /> :
+    section === "staff-doctors" ? <HospitalStaffDoctorsCard doctors={staffDoctors.data ?? []} /> :
+    section === "blockchain-logs" ? <BlockchainTransactionsCard title="Blockchain Logs" transactions={dashboard.data?.transactions ?? []} /> :
+    <ProfileStatusCard title="Hospital Profile" status={dashboard.data?.verificationStatus} />;
   return <><StatusMessage message={message} />{content}</>;
 }
 
-function PatientRegistrationInfo() {
-  return <Card><h2 className="text-xl font-black">Patient Registration</h2><p className="mt-3 text-slate-600">Use the backend hospital registration API for new patient intake. Existing demo workflows use Health ID search so hospital records are attached to the correct patient profile.</p></Card>;
+function HospitalPatientRegistrationForm({ onSubmit, saving }: { onSubmit: (payload: any) => void; saving?: boolean }) {
+  function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSubmit(Object.fromEntries(new FormData(event.currentTarget).entries()));
+  }
+  return (
+    <Card>
+      <PageHeading title="Patient Registration" description="Create a patient account and health profile. The backend assigns the Health ID and a temporary demo password." />
+      <form onSubmit={submit} className="grid gap-3 md:grid-cols-2">
+        <Input name="fullName" placeholder="Full name" required />
+        <Input name="email" type="email" placeholder="Email" required />
+        <Input name="phone" placeholder="Phone" />
+        <Input name="dateOfBirth" type="date" required />
+        <Select name="gender" required><option value="">Gender</option><option>Female</option><option>Male</option><option>Other</option></Select>
+        <Input name="nidOrBirthCertificate" placeholder="NID or birth certificate" required />
+        <Select name="bloodGroup" required><option value="">Blood group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></Select>
+        <Input name="emergencyContactName" placeholder="Emergency contact name" required />
+        <Input name="emergencyContactPhone" placeholder="Emergency contact phone" required />
+        <Textarea name="address" placeholder="Address" required />
+        <Button disabled={saving}>{saving ? "Registering..." : "Register Patient"}</Button>
+      </form>
+    </Card>
+  );
+}
+
+function HospitalDocumentsPage({ records }: { records: MedicalRecord[] }) {
+  return (
+    <div className="space-y-4">
+      <RecordList title="Medical Documents" description="Hospital-created admission, discharge, and surgery records with integrity hashes." records={records} empty="No hospital documents created yet." />
+      <div className="grid gap-3 md:grid-cols-3">
+        <Link to="/dashboard/admissions" className="rounded-lg bg-sky-50 p-4 font-bold text-medical-700">Create admission record</Link>
+        <Link to="/dashboard/discharge-summaries" className="rounded-lg bg-sky-50 p-4 font-bold text-medical-700">Create discharge summary</Link>
+        <Link to="/dashboard/surgery-records" className="rounded-lg bg-sky-50 p-4 font-bold text-medical-700">Create surgery record</Link>
+      </div>
+    </div>
+  );
+}
+
+function HospitalStaffDoctorsCard({ doctors }: { doctors: any[] }) {
+  return (
+    <Card>
+      <PageHeading title="Staff Doctors" description="Verified doctors whose organization name matches this hospital." />
+      <div className="space-y-3">
+        {doctors.length === 0 && <EmptyState text="No verified doctors are linked to this hospital organization name yet." />}
+        {doctors.map((doctor) => (
+          <div key={doctor.id} className="rounded-lg border border-sky-100 p-4">
+            <div className="font-bold">{doctor.user?.fullName}</div>
+            <div className="text-sm text-slate-600">{doctor.specialization} - {doctor.medicalRegistrationNumber}</div>
+            <div className="mt-1 text-xs font-semibold text-slate-500">{doctor.user?.email}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 }
 
 function LabDashboard({ section }: { section: string }) {
@@ -283,6 +465,11 @@ function LabDashboard({ section }: { section: string }) {
     onSuccess: () => { setMessage("Report uploaded and saved."); void qc.invalidateQueries(); },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Report upload failed")
   });
+  const verify = useMutation({
+    mutationFn: (id: string) => unwrap<any>(api.post(`/laboratories/reports/${id}/verify`)),
+    onSuccess: (_data) => { setMessage("Report hash is available for patient-side blockchain verification."); void qc.invalidateQueries(); },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Report verification failed")
+  });
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedPatient) {
@@ -293,14 +480,17 @@ function LabDashboard({ section }: { section: string }) {
     data.set("patientId", selectedPatient.id);
     upload.mutate(data);
   }
-  const uploadView = <section className="grid gap-4 lg:grid-cols-2"><PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} /><Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><UploadCloud />Upload Diagnostic Report</h2>{!selectedPatient && <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. The patient must approve diagnostic report access.</div>}<form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Select name="category"><option>Blood test</option><option>Pathology</option><option>X-ray</option><option>MRI</option><option>CT scan</option><option>Ultrasound</option><option>Other</option></Select><Input name="title" placeholder="Report title" required /><Input name="testDate" type="date" required /><Input name="file" type="file" accept="application/pdf,image/png,image/jpeg" required /><Textarea name="resultSummary" placeholder="Result summary" /><Button disabled={!selectedPatient || upload.isPending}>{upload.isPending ? "Uploading..." : "Upload and Anchor"}</Button></form></Card></section>;
+  const patientSearch = <PatientSearchCard title="Patient Search" query={query} setQuery={setQuery} patients={patients.data ?? []} selectedPatient={selectedPatient} onSelect={setSelectedPatient} onRequestAccess={(patientId) => requestAccess.mutate(patientId)} requesting={requestAccess.isPending} />;
+  const uploadForm = <Card><h2 className="mb-4 flex items-center gap-2 text-xl font-black"><UploadCloud />Upload Diagnostic Report</h2>{!selectedPatient && <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first. The patient must approve diagnostic report access.</div>}<form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" /><Select name="category"><option>Blood test</option><option>Pathology</option><option>X-ray</option><option>MRI</option><option>CT scan</option><option>Ultrasound</option><option>Other</option></Select><Input name="title" placeholder="Report title" required /><Input name="testDate" type="date" required /><Input name="file" type="file" accept="application/pdf,image/png,image/jpeg" required /><Textarea name="resultSummary" placeholder="Result summary" /><Button disabled={!selectedPatient || upload.isPending}>{upload.isPending ? "Uploading..." : "Upload and Anchor"}</Button></form></Card>;
   const content =
     section === "overview" ? <StatsGrid stats={dashboard.data ?? {}} /> :
-    section === "patient-search" || section === "upload-diagnostic-report" ? uploadView :
-    section === "my-reports" || section === "verification" ? <RecordList records={reports.data ?? []} /> :
-    section === "access-requests" ? <Card><h2 className="text-xl font-black">My Access Requests</h2>{(requests.data ?? []).map((r) => <div key={r.id} className="border-t border-sky-100 py-3"><b>{r.patient.user.fullName}</b> - {r.status}</div>)}</Card> :
-    section === "blockchain-logs" ? <RecordList records={reports.data ?? []} /> :
-    <Card><h2 className="text-xl font-black">Profile</h2><div className="mt-3 rounded-lg bg-sky-50 p-3 font-semibold">Verification status: {dashboard.data?.verificationStatus ?? "PENDING"}</div></Card>;
+    section === "patient-search" ? patientSearch :
+    section === "upload-diagnostic-report" ? <section className="grid gap-4 lg:grid-cols-2">{patientSearch}{uploadForm}</section> :
+    section === "my-reports" ? <RecordList title="My Reports" description="Diagnostic reports uploaded by this laboratory." records={reports.data ?? []} empty="No reports uploaded yet." /> :
+    section === "verification" ? <RecordList title="Verification" description="Review hashes and blockchain status for uploaded diagnostic reports." records={reports.data ?? []} empty="No reports available for verification." onVerify={(id) => verify.mutate(id)} /> :
+    section === "access-requests" ? <AccessRequestsCard title="My Access Requests" requests={requests.data ?? []} /> :
+    section === "blockchain-logs" ? <RecordList title="Blockchain Logs" description="Anchoring status for laboratory reports." records={reports.data ?? []} empty="No blockchain logs yet." /> :
+    <ProfileStatusCard title="Laboratory Profile" status={dashboard.data?.verificationStatus} />;
   return <><StatusMessage message={message} />{content}</>;
 }
 
@@ -388,12 +578,16 @@ function RecordForm({ title, selectedPatient, fields, onSubmit, saving }: { titl
   return <Card><h2 className="text-xl font-black">{title}</h2>{!selectedPatient && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-700">Select a patient first and make sure access is approved.</div>}<form onSubmit={submit} className="mt-4 grid gap-3 md:grid-cols-2"><Input value={selectedPatient ? `${selectedPatient.user.fullName} (${selectedPatient.healthId})` : ""} readOnly placeholder="Selected patient" />{fields.map((field) => <Input key={field} name={field} placeholder={field} required={field !== "notes"} />)}<Button disabled={!selectedPatient || saving}>{saving ? "Saving..." : "Save Record"}</Button></form></Card>;
 }
 
-function RecordList({ records, onVerify }: { records: MedicalRecord[]; onVerify?: (id: string) => void }) {
+function RecordList({ title = "Medical Records", description, records, empty = "No records yet.", onVerify }: { title?: string; description?: string; records: MedicalRecord[]; empty?: string; onVerify?: (id: string) => void }) {
+  const explorerBase = import.meta.env.VITE_SEPOLIA_EXPLORER_BASE_URL || "https://base-sepolia-testnet-explorer.skalenodes.com";
   return (
     <Card id="blockchain-verification">
-      <h2 className="mb-4 flex items-center gap-2 text-xl font-black"><FileCheck2 />Medical Records</h2>
+      <div className="mb-4 flex items-start gap-2">
+        <FileCheck2 className="mt-1 shrink-0" />
+        <PageHeading title={title} description={description} />
+      </div>
       <div className="space-y-3">
-        {records.length === 0 && <div className="rounded-lg bg-sky-50 p-6 text-center font-semibold text-slate-500">No records yet.</div>}
+        {records.length === 0 && <EmptyState text={empty} />}
         {records.map((record) => (
           <div key={record.id} className="rounded-lg border border-sky-100 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -403,7 +597,7 @@ function RecordList({ records, onVerify }: { records: MedicalRecord[]; onVerify?
             <div className="mt-3 break-all rounded-lg bg-slate-50 p-3 text-xs text-slate-600">SHA-256: {record.fileHash}</div>
             <div className="mt-3 flex flex-wrap gap-2">
               {onVerify && <Button onClick={() => onVerify(record.id)}><ShieldCheck size={16} /> Verify integrity</Button>}
-              {record.blockchainTxHash && <a className="rounded-lg bg-sky-50 px-4 py-2 font-bold text-medical-700" href={`${import.meta.env.VITE_SEPOLIA_EXPLORER_BASE_URL}/tx/${record.blockchainTxHash}`} target="_blank" rel="noreferrer">Sepolia explorer</a>}
+              {record.blockchainTxHash && <a className="rounded-lg bg-sky-50 px-4 py-2 font-bold text-medical-700" href={`${explorerBase}/tx/${record.blockchainTxHash}`} target="_blank" rel="noreferrer">Open explorer</a>}
             </div>
           </div>
         ))}

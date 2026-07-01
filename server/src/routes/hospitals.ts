@@ -98,6 +98,26 @@ router.get(
   })
 );
 
+router.get(
+  "/records",
+  asyncHandler(async (req, res) => {
+    await verifiedHospital(req.user!.id);
+    ok(res, await prisma.medicalRecord.findMany({ where: { creatorUserId: req.user!.id }, include: { patient: { include: { user: true } } }, orderBy: { createdAt: "desc" } }));
+  })
+);
+
+router.get(
+  "/staff-doctors",
+  asyncHandler(async (req, res) => {
+    const hospital = await verifiedHospital(req.user!.id);
+    ok(res, await prisma.doctorProfile.findMany({
+      where: { organizationName: { contains: hospital.hospitalName }, verificationStatus: "VERIFIED" },
+      include: { user: { select: { id: true, fullName: true, email: true, phone: true, isActive: true } } },
+      orderBy: { updatedAt: "desc" }
+    }));
+  })
+);
+
 router.post(
   "/patients/register",
   asyncHandler(async (req, res) => {
