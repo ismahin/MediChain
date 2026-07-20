@@ -5,10 +5,9 @@ import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { authenticate, requireRoles } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
-import { ApiError, ok } from "../utils/api.js";
+import { ApiError, ok, publicUserSelect } from "../utils/api.js";
 import { hashMetadata, sha256Hex, stableStringify } from "../utils/hash.js";
-import { anchorRecord } from "../services/blockchain.js";
-import { hasPatientAccess } from "../services/access.js";
+import { hasPatientAccess, patientAccessStatus } from "../services/access.js";
 
 const router = Router();
 router.use(authenticate, requireRoles(Role.HOSPITAL));
@@ -27,11 +26,9 @@ async function createHospitalRecord(userId: string, patientId: string, type: Rec
   if (!patient) throw new ApiError(404, "Patient not found");
   const fileHash = sha256Hex(stableStringify(payload));
   const metadataHash = hashMetadata({ type, patientId, hospitalId: hospital.id, title });
-  const record = await prisma.medicalRecord.create({
+  return prisma.medicalRecord.create({
     data: { patientId, creatorUserId: userId, creatorOrganizationId: hospital.id, recordType: type, title, description, recordDate: new Date(), fileHash, metadataHash, blockchainStatus: BlockchainStatus.PENDING }
   });
-  const anchor = await anchorRecord({ recordId: record.id, healthId: patient.healthId, fileHash, metadataHash, recordType: type === RecordType.SURGERY ? 5 : 4 });
-  return prisma.medicalRecord.update({ where: { id: record.id }, data: { blockchainStatus: anchor.status, blockchainTxHash: anchor.txHash, blockchainBlockNumber: anchor.blockNumber, blockchainTimestamp: anchor.timestamp, blockchainError: anchor.error } });
 }
 
 router.get(
@@ -51,15 +48,16 @@ router.get(
   "/patients/search",
   asyncHandler(async (req, res) => {
     await verifiedHospital(req.user!.id);
-    const query = String(req.query.q ?? "");
+    const query = String(req.query.q ?? "").trim();
     const patients = await prisma.patientProfile.findMany({
       where: {
-        OR: [{ healthId: { contains: query } }, { user: { fullName: { contains: query } } }]
+        OR: [{ healthId: { contains: query } }, { user: { fullName: { contains: query } } }, { user: { email: { contains: query } } }]
       },
       include: { user: { select: { id: true, fullName: true, email: true } } },
-      take: 10
+      orderBy: { createdAt: "desc" },
+      take: 50
     });
-    ok(res, patients);
+    ok(res, await Promise.all(patients.map(async (patient) => ({ ...patient, accessStatus: await patientAccessStatus(req.user!.id, patient.id) }))));
   })
 );
 
@@ -72,12 +70,15 @@ router.post(
       reason: z.string().min(5),
       requestedDurationHours: z.number().int().min(1).max(720)
     }).parse(req.body);
+    const accessStatus = await patientAccessStatus(req.user!.id, req.params.patientId);
+    if (accessStatus === "ACTIVE") throw new ApiError(409, "You already have active access to this patient");
+    if (accessStatus === "PENDING") throw new ApiError(409, "An access request for this patient is already pending");
+    const patient = await prisma.patientProfile.findUnique({ where: { id: req.params.patientId } });
+    if (!patient) throw new ApiError(404, "Patient not found");
     const request = await prisma.accessRequest.create({
       data: { patientId: req.params.patientId, requesterUserId: req.user!.id, requesterRole: Role.HOSPITAL, ...body }
     });
-    const patient = await prisma.patientProfile.findUnique({ where: { id: req.params.patientId } });
-    if (patient) {
-      await prisma.notification.create({
+    await prisma.notification.create({
         data: {
           userId: patient.userId,
           title: "Hospital access request",
@@ -86,7 +87,6 @@ router.post(
           relatedEntityId: request.id
         }
       });
-    }
     ok(res.status(201), request, "Hospital access request sent");
   })
 );
@@ -94,7 +94,7 @@ router.post(
 router.get(
   "/access-requests",
   asyncHandler(async (req, res) => {
-    ok(res, await prisma.accessRequest.findMany({ where: { requesterUserId: req.user!.id }, include: { patient: { include: { user: true } } }, orderBy: { createdAt: "desc" } }));
+    ok(res, await prisma.accessRequest.findMany({ where: { requesterUserId: req.user!.id }, include: { patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" }, distinct: ["patientId", "requesterUserId"] }));
   })
 );
 
@@ -102,21 +102,38 @@ router.get(
   "/records",
   asyncHandler(async (req, res) => {
     await verifiedHospital(req.user!.id);
-    ok(res, await prisma.medicalRecord.findMany({ where: { creatorUserId: req.user!.id }, include: { patient: { include: { user: true } } }, orderBy: { createdAt: "desc" } }));
+    ok(res, await prisma.medicalRecord.findMany({ where: { creatorUserId: req.user!.id }, include: { patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" } }));
   })
 );
 
 router.get(
   "/staff-doctors",
   asyncHandler(async (req, res) => {
-    const hospital = await verifiedHospital(req.user!.id);
-    ok(res, await prisma.doctorProfile.findMany({
-      where: { organizationName: { contains: hospital.hospitalName }, verificationStatus: "VERIFIED" },
-      include: { user: { select: { id: true, fullName: true, email: true, phone: true, isActive: true } } },
-      orderBy: { updatedAt: "desc" }
-    }));
+    await verifiedHospital(req.user!.id);
+    const [doctors, memberships] = await Promise.all([
+      prisma.doctorProfile.findMany({ where: { verificationStatus: "VERIFIED", user: { isActive: true } }, include: { user: { select: publicUserSelect } }, orderBy: { user: { fullName: "asc" } } }),
+      prisma.hospitalDoctor.findMany({ where: { hospitalUserId: req.user!.id } })
+    ]);
+    const staffIds = new Set(memberships.map((item) => item.doctorUserId));
+    ok(res, doctors.map((doctor) => ({ ...doctor, isStaff: staffIds.has(doctor.userId) })));
   })
 );
+
+router.post("/staff-doctors/:doctorUserId", asyncHandler(async (req, res) => {
+  await verifiedHospital(req.user!.id);
+  const doctor = await prisma.doctorProfile.findFirst({ where: { userId: req.params.doctorUserId, verificationStatus: "VERIFIED", user: { isActive: true } } });
+  if (!doctor) throw new ApiError(404, "Verified doctor not found");
+  const membership = await prisma.hospitalDoctor.upsert({ where: { hospitalUserId_doctorUserId: { hospitalUserId: req.user!.id, doctorUserId: doctor.userId } }, create: { hospitalUserId: req.user!.id, doctorUserId: doctor.userId }, update: {} });
+  ok(res, membership, "Doctor added to hospital staff");
+}));
+
+router.delete("/staff-doctors/:doctorUserId", asyncHandler(async (req, res) => {
+  await verifiedHospital(req.user!.id);
+  const membership = await prisma.hospitalDoctor.findUnique({ where: { hospitalUserId_doctorUserId: { hospitalUserId: req.user!.id, doctorUserId: req.params.doctorUserId } } });
+  if (!membership) throw new ApiError(404, "Doctor is not on this hospital's staff");
+  await prisma.hospitalDoctor.delete({ where: { id: membership.id } });
+  ok(res, null, "Doctor removed from hospital staff");
+}));
 
 router.post(
   "/patients/register",
@@ -124,7 +141,7 @@ router.post(
     await verifiedHospital(req.user!.id);
     const body = z.object({
       fullName: z.string().min(2),
-      email: z.string().email(),
+      email: z.string().trim().toLowerCase().email(),
       phone: z.string().optional(),
       dateOfBirth: z.string(),
       gender: z.string(),
@@ -134,6 +151,11 @@ router.post(
       emergencyContactPhone: z.string(),
       address: z.string()
     }).parse(req.body);
+    const existingUser = await prisma.user.findUnique({ where: { email: body.email }, include: { patientProfile: true } });
+    if (existingUser) {
+      const patientHint = existingUser.patientProfile?.healthId ? ` Their Health ID is ${existingUser.patientProfile.healthId}. Find them in Patient Directory.` : " Use a different email address.";
+      throw new ApiError(409, `An account with ${body.email} already exists.${patientHint}`);
+    }
     const passwordHash = await bcrypt.hash("Patient@12345", 12);
     const user = await prisma.user.create({
       data: {
@@ -162,7 +184,14 @@ router.post(
       },
       include: { patientProfile: true }
     });
-    ok(res.status(201), user, "Patient registered with temporary password Patient@12345");
+    ok(res.status(201), {
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+      phone: user.phone,
+      patientProfile: user.patientProfile,
+      temporaryPassword: "Patient@12345"
+    }, "Patient registered successfully");
   })
 );
 

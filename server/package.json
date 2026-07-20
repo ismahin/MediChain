@@ -8,7 +8,8 @@
     "start": "tsx src/server.ts",
     "build": "tsc --noEmit",
     "test": "vitest run",
-    "db:migrate": "prisma migrate dev --name init",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts"
   },

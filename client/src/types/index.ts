@@ -29,4 +29,11 @@ export type MedicalRecord = {
   blockchainBlockNumber?: number;
   recordDate: string;
   creator?: User;
+  prescription?: {
+    id: string;
+    diagnosis: string;
+    notes?: string | null;
+    followUpDate?: string | null;
+    medications: Array<{ id: string; medicineName: string; dosage: string; frequency: string; duration: string; instructions?: string | null }>;
+  } | null;
 };

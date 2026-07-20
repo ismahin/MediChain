@@ -23,3 +23,9 @@ export async function hasPatientAccess(userId: string, patientId: string, catego
   const categories = permission.grantedCategories as string[];
   return categories.some((item) => fullAliases.has(item) || item === category);
 }
+
+export async function patientAccessStatus(userId: string, patientId: string): Promise<"NONE" | "PENDING" | "ACTIVE"> {
+  if (await hasPatientAccess(userId, patientId)) return "ACTIVE";
+  const pending = await prisma.accessRequest.findFirst({ where: { patientId, requesterUserId: userId, status: "PENDING" }, select: { id: true } });
+  return pending ? "PENDING" : "NONE";
+}

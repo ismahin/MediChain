@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { authenticate, requireRoles } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
-import { ApiError, ok } from "../utils/api.js";
+import { ApiError, ok, publicUserSelect } from "../utils/api.js";
 import { permissionHash, recordAccessProof } from "../services/blockchain.js";
 import { writeAudit } from "../services/audit.js";
 
@@ -22,7 +22,7 @@ router.get(
   requireRoles(Role.PATIENT),
   asyncHandler(async (req, res) => {
     const patient = await patientProfile(req.user!.id);
-    ok(res, await prisma.accessRequest.findMany({ where: { patientId: patient.id }, include: { requester: true }, orderBy: { createdAt: "desc" } }));
+    ok(res, await prisma.accessRequest.findMany({ where: { patientId: patient.id }, include: { requester: { select: publicUserSelect } }, orderBy: { createdAt: "desc" }, distinct: ["patientId", "requesterUserId"] }));
   })
 );
 
@@ -32,7 +32,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const patient = await patientProfile(req.user!.id);
     const body = z.object({ grantedCategories: z.array(z.string()).min(1), expiresAt: z.string().optional() }).parse(req.body);
-    const request = await prisma.accessRequest.findUnique({ where: { id: req.params.id }, include: { requester: true } });
+    const request = await prisma.accessRequest.findUnique({ where: { id: req.params.id }, include: { requester: { select: publicUserSelect } } });
     if (!request || request.patientId !== patient.id) throw new ApiError(404, "Access request not found");
     if (request.status !== "PENDING") throw new ApiError(409, `Access request is already ${request.status.toLowerCase()}`);
     const expiresAt = body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + request.requestedDurationHours * 60 * 60 * 1000);
@@ -74,7 +74,7 @@ router.get(
   requireRoles(Role.PATIENT),
   asyncHandler(async (req, res) => {
     const patient = await patientProfile(req.user!.id);
-    ok(res, await prisma.accessPermission.findMany({ where: { patientId: patient.id }, include: { grantee: true }, orderBy: { grantedAt: "desc" } }));
+    ok(res, await prisma.accessPermission.findMany({ where: { patientId: patient.id }, include: { grantee: { select: publicUserSelect } }, orderBy: { grantedAt: "desc" } }));
   })
 );
 
@@ -83,7 +83,7 @@ router.post(
   requireRoles(Role.PATIENT),
   asyncHandler(async (req, res) => {
     const patient = await patientProfile(req.user!.id);
-    const permission = await prisma.accessPermission.findUnique({ where: { id: req.params.id }, include: { grantee: true } });
+    const permission = await prisma.accessPermission.findUnique({ where: { id: req.params.id }, include: { grantee: { select: publicUserSelect } } });
     if (!permission || permission.patientId !== patient.id) throw new ApiError(404, "Permission not found");
     if (permission.status !== "ACTIVE") throw new ApiError(409, `Permission is already ${permission.status.toLowerCase()}`);
     if (permission.expiresAt <= new Date()) throw new ApiError(409, "Permission is already expired");

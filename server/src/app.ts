@@ -12,6 +12,7 @@ import accessRoutes from "./routes/access.js";
 import blockchainRoutes from "./routes/blockchain.js";
 import adminRoutes from "./routes/admin.js";
 import notificationRoutes from "./routes/notifications.js";
+import careRoutes from "./routes/care.js";
 import { errorHandler, notFound } from "./middleware/error.js";
 
 export const app = express();
@@ -34,6 +35,7 @@ app.use("/api/access", accessRoutes);
 app.use("/api/blockchain", blockchainRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/care", careRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

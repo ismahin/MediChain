@@ -72,6 +72,25 @@ enum TransactionStatus {
   FAILED
 }
 
+enum CareCaseStatus {
+  SUBMITTED
+  DOCTOR_ASSIGNED
+  CONSENT_PENDING
+  IN_CONSULTATION
+  TESTS_ORDERED
+  FOLLOW_UP
+  COMPLETED
+  CANCELLED
+}
+
+enum DiagnosticOrderStatus {
+  REQUESTED
+  LAB_ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 model User {
   id            String   @id @default(cuid())
   fullName      String
@@ -123,8 +142,83 @@ model PatientProfile {
   permissions    AccessPermission[]
   emergencyLogs  EmergencyAccessLog[]
   auditLogs      AuditLog[]
+  careCases      CareCase[]
 
   @@index([healthId])
+}
+
+model CareCase {
+  id                    String         @id @default(cuid())
+  patientId             String
+  problemTitle          String
+  problemDetails        String         @db.Text
+  preferredDoctorUserId String?
+  hospitalUserId        String?
+  assignedDoctorUserId  String?
+  appointmentDate       DateTime
+  status                CareCaseStatus @default(SUBMITTED)
+  hospitalNotes         String?        @db.Text
+  doctorNotes           String?        @db.Text
+  followUpDate          DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  patient          PatientProfile    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  documents        CaseDocument[]
+  diagnosticOrders DiagnosticOrder[]
+
+  @@index([patientId, status])
+  @@index([hospitalUserId, status])
+  @@index([assignedDoctorUserId, status])
+}
+
+model CaseDocument {
+  id               String   @id @default(cuid())
+  careCaseId       String
+  filePath         String
+  originalFileName String
+  mimeType         String
+  fileSize         Int
+  fileHash         String
+  createdAt        DateTime @default(now())
+
+  careCase CareCase @relation(fields: [careCaseId], references: [id], onDelete: Cascade)
+
+  @@index([careCaseId])
+}
+
+model DiagnosticOrder {
+  id                    String                @id @default(cuid())
+  careCaseId            String
+  patientId             String
+  doctorUserId          String
+  hospitalUserId        String?
+  laboratoryUserId      String?
+  testName              String
+  clinicalReason        String                @db.Text
+  instructions          String?               @db.Text
+  status                DiagnosticOrderStatus @default(REQUESTED)
+  reportMedicalRecordId String?
+  orderedAt             DateTime              @default(now())
+  assignedAt            DateTime?
+  completedAt           DateTime?
+
+  careCase CareCase @relation(fields: [careCaseId], references: [id], onDelete: Cascade)
+
+  @@index([careCaseId, status])
+  @@index([hospitalUserId, status])
+  @@index([laboratoryUserId, status])
+}
+
+model HospitalDoctor {
+  id             String   @id @default(cuid())
+  hospitalUserId String
+  doctorUserId   String
+  createdAt      DateTime @default(now())
+
+  @@unique([hospitalUserId, doctorUserId])
+  @@index([hospitalUserId])
+  @@index([doctorUserId])
 }
 
 model DoctorProfile {

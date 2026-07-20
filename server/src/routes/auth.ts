@@ -1,16 +1,18 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { Role, VerificationStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
 import { authenticate, signAccessToken, signRefreshToken } from "../middleware/auth.js";
 import { ApiError, ok, toPublicUser } from "../utils/api.js";
+import { env } from "../config/env.js";
 
 const router = Router();
 
 const baseAuth = {
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8),
   phone: z.string().optional(),
   walletAddress: z.string().optional()
@@ -167,7 +169,7 @@ router.post(
 router.post(
   "/login",
   asyncHandler(async (req, res) => {
-    const body = z.object({ email: z.string().email(), password: z.string(), role: z.nativeEnum(Role).optional() }).parse(req.body);
+    const body = z.object({ email: z.string().trim().toLowerCase().email(), password: z.string(), role: z.nativeEnum(Role).optional() }).parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: body.email } });
     if (!user || !(await bcrypt.compare(body.password, user.passwordHash))) {
       throw new ApiError(401, "Invalid email or password");
@@ -175,6 +177,19 @@ router.post(
     if (body.role && body.role !== user.role) throw new ApiError(403, "Selected role does not match this account");
     if (!user.isActive) throw new ApiError(403, "Account is suspended");
     ok(res, { user: toPublicUser(user), accessToken: signAccessToken(user), refreshToken: signRefreshToken(user) }, "Logged in");
+  })
+);
+
+router.post(
+  "/refresh",
+  asyncHandler(async (req, res) => {
+    const { refreshToken } = z.object({ refreshToken: z.string().min(1) }).parse(req.body);
+    let payload: { sub: string };
+    try { payload = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET) as { sub: string }; }
+    catch { throw new ApiError(401, "Invalid or expired refresh token"); }
+    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user?.isActive) throw new ApiError(401, "Invalid or inactive account");
+    ok(res, { accessToken: signAccessToken(user), refreshToken: signRefreshToken(user) }, "Session refreshed");
   })
 );
 

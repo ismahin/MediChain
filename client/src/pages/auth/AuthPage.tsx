@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { HeartPulse } from "lucide-react";
@@ -9,6 +9,7 @@ import type { Role, User } from "../../types";
 import { Button, Card, Input, Select, SecurityNote } from "../../components/ui";
 
 const roles: Role[] = ["PATIENT", "DOCTOR", "HOSPITAL", "LABORATORY", "ADMIN"];
+const registrationRoles: Role[] = ["PATIENT", "DOCTOR", "HOSPITAL", "LABORATORY"];
 const demoAccounts = [
   ["admin@medichain.demo", "Admin@12345", "ADMIN"],
   ["patient@medichain.demo", "Patient@12345", "PATIENT"],
@@ -24,6 +25,10 @@ export function AuthPage({ mode = "login" }: { mode?: "login" | "register" }) {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (mode === "register" && role === "ADMIN") setRole("PATIENT");
+  }, [mode, role]);
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -35,8 +40,9 @@ export function AuthPage({ mode = "login" }: { mode?: "login" | "register" }) {
       } else {
         const endpoint = role.toLowerCase();
         const payload = buildRegistrationPayload(role, form);
-        const result = await unwrap<{ user: User; accessToken: string }>(api.post(`/auth/register/${endpoint}`, payload));
+        const result = await unwrap<{ user: User; accessToken: string; refreshToken: string }>(api.post(`/auth/register/${endpoint}`, payload));
         localStorage.setItem("medichain_access_token", result.accessToken);
+        localStorage.setItem("medichain_refresh_token", result.refreshToken);
       }
       navigate("/dashboard");
     } catch (error) {
@@ -80,7 +86,7 @@ export function AuthPage({ mode = "login" }: { mode?: "login" | "register" }) {
             <Link className={`rounded-lg px-4 py-2 font-bold ${mode === "register" ? "bg-medical-600 text-white" : "bg-sky-50 text-medical-700"}`} to="/register">Register</Link>
           </div>
           <form onSubmit={submit} className="grid gap-4">
-            <label className="text-sm font-bold">Role<Select value={role} onChange={(event) => setRole(event.target.value as Role)}>{roles.map((item) => <option key={item}>{item}</option>)}</Select></label>
+            <label className="text-sm font-bold">Role<Select value={role} onChange={(event) => setRole(event.target.value as Role)}>{(mode === "register" ? registrationRoles : roles).map((item) => <option key={item}>{item}</option>)}</Select></label>
             <label className="text-sm font-bold">Email<Input name="email" type="email" required /></label>
             <label className="text-sm font-bold">Password<Input name="password" type="password" required minLength={8} /></label>
 
@@ -117,7 +123,6 @@ export function AuthPage({ mode = "login" }: { mode?: "login" | "register" }) {
               </>
             )}
 
-            {mode === "login" && <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" />Remember me <span className="ml-auto text-medical-700">Forgot password?</span></label>}
             {message && <div className="rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-700">{message}</div>}
             <Button disabled={loading}>{loading ? "Please wait..." : mode === "login" ? "Login" : "Create account"}</Button>
           </form>

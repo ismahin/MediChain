@@ -1,15 +1,16 @@
 import { Router } from "express";
 import path from "path";
+import fs from "fs";
 import { BlockchainStatus, RecordType, Role } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { authenticate, requireRoles } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
 import { uploadTo } from "../middleware/upload.js";
-import { ApiError, ok } from "../utils/api.js";
+import { ApiError, ok, publicUserSelect } from "../utils/api.js";
 import { hashFile, hashMetadata } from "../utils/hash.js";
-import { anchorRecord } from "../services/blockchain.js";
-import { hasPatientAccess } from "../services/access.js";
+import { hasPatientAccess, patientAccessStatus } from "../services/access.js";
+import { verifyOnChain } from "../services/blockchain.js";
 
 const router = Router();
 const upload = uploadTo("reports");
@@ -38,7 +39,7 @@ router.get(
 router.get(
   "/reports",
   asyncHandler(async (req, res) => {
-    ok(res, await prisma.medicalRecord.findMany({ where: { creatorUserId: req.user!.id, recordType: RecordType.LAB_REPORT }, include: { patient: { include: { user: true } } }, orderBy: { createdAt: "desc" } }));
+    ok(res, await prisma.medicalRecord.findMany({ where: { creatorUserId: req.user!.id, recordType: RecordType.LAB_REPORT }, include: { patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" } }));
   })
 );
 
@@ -54,7 +55,7 @@ router.get(
       include: { user: { select: { id: true, fullName: true, email: true } } },
       take: 10
     });
-    ok(res, patients);
+    ok(res, await Promise.all(patients.map(async (patient) => ({ ...patient, accessStatus: await patientAccessStatus(req.user!.id, patient.id) }))));
   })
 );
 
@@ -67,12 +68,15 @@ router.post(
       reason: z.string().min(5),
       requestedDurationHours: z.number().int().min(1).max(720)
     }).parse(req.body);
+    const accessStatus = await patientAccessStatus(req.user!.id, req.params.patientId);
+    if (accessStatus === "ACTIVE") throw new ApiError(409, "You already have active access to this patient");
+    if (accessStatus === "PENDING") throw new ApiError(409, "An access request for this patient is already pending");
+    const patient = await prisma.patientProfile.findUnique({ where: { id: req.params.patientId } });
+    if (!patient) throw new ApiError(404, "Patient not found");
     const request = await prisma.accessRequest.create({
       data: { patientId: req.params.patientId, requesterUserId: req.user!.id, requesterRole: Role.LABORATORY, ...body }
     });
-    const patient = await prisma.patientProfile.findUnique({ where: { id: req.params.patientId } });
-    if (patient) {
-      await prisma.notification.create({
+    await prisma.notification.create({
         data: {
           userId: patient.userId,
           title: "Laboratory access request",
@@ -81,7 +85,6 @@ router.post(
           relatedEntityId: request.id
         }
       });
-    }
     ok(res.status(201), request, "Laboratory access request sent");
   })
 );
@@ -89,7 +92,7 @@ router.post(
 router.get(
   "/access-requests",
   asyncHandler(async (req, res) => {
-    ok(res, await prisma.accessRequest.findMany({ where: { requesterUserId: req.user!.id }, include: { patient: { include: { user: true } } }, orderBy: { createdAt: "desc" } }));
+    ok(res, await prisma.accessRequest.findMany({ where: { requesterUserId: req.user!.id }, include: { patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" }, distinct: ["patientId", "requesterUserId"] }));
   })
 );
 
@@ -123,9 +126,7 @@ router.post(
         blockchainStatus: BlockchainStatus.PENDING
       }
     });
-    const anchor = await anchorRecord({ recordId: record.id, healthId: patient.healthId, fileHash, metadataHash, recordType: 3 });
-    const updated = await prisma.medicalRecord.update({ where: { id: record.id }, data: { blockchainStatus: anchor.status, blockchainTxHash: anchor.txHash, blockchainBlockNumber: anchor.blockNumber, blockchainTimestamp: anchor.timestamp, blockchainError: anchor.error } });
-    ok(res.status(201), updated, "Report uploaded and queued for blockchain proof");
+    ok(res.status(201), record, "Report uploaded; confirm the blockchain proof in MetaMask");
   })
 );
 
@@ -134,7 +135,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const record = await prisma.medicalRecord.findUnique({ where: { id: req.params.id } });
     if (!record || record.creatorUserId !== req.user!.id) throw new ApiError(404, "Report not found");
-    ok(res, record, "Use /api/patients/medical-records/:id/verify for integrity verification");
+    const recalculatedHash = record.filePath && fs.existsSync(record.filePath) ? await hashFile(record.filePath) : "";
+    const onChain = await verifyOnChain(record.fileHash);
+    const matches = Boolean(recalculatedHash) && recalculatedHash === record.fileHash;
+    const verified = matches && onChain.configured && onChain.exists && onChain.active;
+    await prisma.medicalRecord.update({ where: { id: record.id }, data: { blockchainStatus: verified ? "VERIFIED" : record.blockchainStatus } });
+    ok(res, { verified, matches, recalculatedHash, storedHash: record.fileHash, onChain }, verified ? "Report file and blockchain proof verified" : "Report could not be verified against the blockchain");
   })
 );
 

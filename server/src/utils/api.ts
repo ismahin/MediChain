@@ -1,4 +1,10 @@
 import type { Response } from "express";
+import type { Prisma } from "@prisma/client";
+
+export const publicUserSelect = {
+  id: true, fullName: true, email: true, phone: true, role: true,
+  walletAddress: true, isActive: true, createdAt: true, updatedAt: true
+} satisfies Prisma.UserSelect;
 
 export function ok<T>(res: Response, data: T, message = "OK") {
   return res.json({ success: true, message, data });

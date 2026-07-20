@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { authenticate, requireRoles } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
-import { ApiError, ok } from "../utils/api.js";
+import { ApiError, ok, publicUserSelect } from "../utils/api.js";
 
 const router = Router();
 router.use(authenticate, requireRoles(Role.ADMIN));
@@ -26,12 +26,12 @@ router.get(
   })
 );
 
-router.get("/users", asyncHandler(async (_req, res) => ok(res, await prisma.user.findMany({ include: { patientProfile: true, doctorProfile: true, hospitalProfile: true, laboratoryProfile: true }, orderBy: { createdAt: "desc" } }))));
+router.get("/users", asyncHandler(async (_req, res) => ok(res, await prisma.user.findMany({ select: { ...publicUserSelect, patientProfile: true, doctorProfile: true, hospitalProfile: true, laboratoryProfile: true }, orderBy: { createdAt: "desc" } }))));
 
 router.post("/users/:id/suspend", asyncHandler(async (req, res) => {
   const body = z.object({ isActive: z.boolean() }).parse(req.body);
   if (req.params.id === req.user!.id && !body.isActive) throw new ApiError(400, "You cannot suspend your own admin account");
-  ok(res, await prisma.user.update({ where: { id: req.params.id }, data: { isActive: body.isActive } }), body.isActive ? "User activated" : "User suspended");
+  ok(res, await prisma.user.update({ where: { id: req.params.id }, data: { isActive: body.isActive }, select: publicUserSelect }), body.isActive ? "User activated" : "User suspended");
 }));
 
 router.post("/doctors/:id/verify", asyncHandler(async (req, res) => {
@@ -96,13 +96,13 @@ router.get("/medical-records", asyncHandler(async (_req, res) => ok(res, await p
 }))));
 
 router.get("/access-permissions", asyncHandler(async (_req, res) => ok(res, await prisma.accessPermission.findMany({
-  include: { patient: { include: { user: true } }, grantee: true },
+  include: { patient: { include: { user: { select: publicUserSelect } } }, grantee: { select: publicUserSelect } },
   orderBy: { grantedAt: "desc" },
   take: 200
 }))));
 
-router.get("/audit-logs", asyncHandler(async (_req, res) => ok(res, await prisma.auditLog.findMany({ include: { actor: true, patient: true }, orderBy: { createdAt: "desc" }, take: 200 }))));
-router.get("/emergency-logs", asyncHandler(async (_req, res) => ok(res, await prisma.emergencyAccessLog.findMany({ include: { requester: true, patient: { include: { user: true } } }, orderBy: { createdAt: "desc" } }))));
+router.get("/audit-logs", asyncHandler(async (_req, res) => ok(res, await prisma.auditLog.findMany({ include: { actor: { select: publicUserSelect }, patient: true }, orderBy: { createdAt: "desc" }, take: 200 }))));
+router.get("/emergency-logs", asyncHandler(async (_req, res) => ok(res, await prisma.emergencyAccessLog.findMany({ include: { requester: { select: publicUserSelect }, patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" } }))));
 router.get("/blockchain-transactions", asyncHandler(async (_req, res) => ok(res, await prisma.blockchainTransaction.findMany({ include: { record: true }, orderBy: { createdAt: "desc" } }))));
 
 export default router;

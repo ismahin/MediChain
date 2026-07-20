@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
+import { Prisma } from "@prisma/client";
 import { ApiError } from "../utils/api.js";
 
 export function notFound(req: Request, _res: Response, next: NextFunction) {
@@ -17,6 +18,10 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
 
   if (error instanceof ApiError) {
     return res.status(error.statusCode).json({ success: false, message: error.message });
+  }
+
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    return res.status(409).json({ success: false, message: "That value is already registered. Please use a different email or identifier." });
   }
 
   console.error(error);

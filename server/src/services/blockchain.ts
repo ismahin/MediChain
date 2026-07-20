@@ -1,5 +1,5 @@
 import { BlockchainStatus, TransactionStatus, TransactionType } from "@prisma/client";
-import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import { Contract, Interface, JsonRpcProvider, Wallet, getAddress } from "ethers";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { mediChainAbi } from "../blockchain/abi.js";
@@ -22,6 +22,47 @@ export function patientIdHash(healthId: string) {
 
 export function permissionHash(input: unknown) {
   return sha256Hex(stableStringify(input));
+}
+
+export function recordProofInput(record: { patient: { healthId: string }; fileHash: string; metadataHash: string; recordType: string }) {
+  const recordTypes: Record<string, number> = { CONSULTATION: 1, PRESCRIPTION: 2, LAB_REPORT: 3, ADMISSION: 4, DISCHARGE: 4, SURGERY: 5, VACCINATION: 6, DOCUMENT: 7 };
+  return {
+    contractAddress: env.CONTRACT_ADDRESS,
+    chainId: env.CHAIN_ID,
+    method: "registerRecord" as const,
+    args: [patientIdHash(record.patient.healthId), `0x${record.fileHash}`, `0x${record.metadataHash}`, recordTypes[record.recordType] ?? 0]
+  };
+}
+
+export async function confirmWalletRecordTransaction(recordId: string, txHash: string) {
+  if (!env.RPC_URL || !env.CONTRACT_ADDRESS) throw new Error("Blockchain RPC and contract address are not configured");
+  const provider = new JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
+  const [record, receipt, transaction] = await Promise.all([
+    prisma.medicalRecord.findUnique({ where: { id: recordId }, include: { patient: true } }),
+    provider.getTransactionReceipt(txHash),
+    provider.getTransaction(txHash)
+  ]);
+  if (!record) throw new Error("Medical record not found");
+  if (!receipt || !transaction) throw new Error("Transaction is not mined yet");
+  if (receipt.status !== 1) throw new Error("Blockchain transaction reverted");
+  if (!transaction.to || getAddress(transaction.to) !== getAddress(env.CONTRACT_ADDRESS)) throw new Error("Transaction was sent to an unexpected contract");
+
+  const iface = new Interface(mediChainAbi);
+  const expectedPatient = patientIdHash(record.patient.healthId).toLowerCase();
+  const expectedRecord = `0x${record.fileHash}`.toLowerCase();
+  const expectedMetadata = `0x${record.metadataHash}`.toLowerCase();
+  const event = receipt.logs
+    .filter((log) => getAddress(log.address) === getAddress(env.CONTRACT_ADDRESS!))
+    .map((log) => { try { return iface.parseLog(log); } catch { return null; } })
+    .find((log) => log?.name === "RecordRegistered" && String(log.args.patientIdHash).toLowerCase() === expectedPatient && String(log.args.recordHash).toLowerCase() === expectedRecord && String(log.args.metadataHash).toLowerCase() === expectedMetadata);
+  if (!event) throw new Error("Receipt does not contain the expected RecordRegistered proof");
+
+  const block = await provider.getBlock(receipt.blockNumber);
+  const timestamp = block ? new Date(block.timestamp * 1000) : new Date();
+  const existing = await prisma.blockchainTransaction.findFirst({ where: { txHash } });
+  if (existing) await prisma.blockchainTransaction.update({ where: { id: existing.id }, data: { recordId, blockNumber: receipt.blockNumber, status: TransactionStatus.CONFIRMED, confirmedAt: timestamp, errorMessage: null } });
+  else await prisma.blockchainTransaction.create({ data: { recordId, transactionType: TransactionType.RECORD, txHash, blockNumber: receipt.blockNumber, network: String(env.CHAIN_ID), status: TransactionStatus.CONFIRMED, confirmedAt: timestamp } });
+  return prisma.medicalRecord.update({ where: { id: recordId }, data: { blockchainStatus: BlockchainStatus.ANCHORED, blockchainTxHash: txHash, blockchainBlockNumber: receipt.blockNumber, blockchainTimestamp: timestamp, blockchainError: null } });
 }
 
 export async function anchorRecord(input: {
