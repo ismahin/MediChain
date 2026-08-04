@@ -1,6 +1,6 @@
 # MediChain Architecture
 
-MediChain uses a React client, Express API, MySQL database, local upload storage, and an Ethereum Sepolia proof contract.
+MediChain uses a React client, Express API, MySQL database, server-managed upload storage, and a configurable EVM proof contract.
 
 ## Flow
 
@@ -9,8 +9,10 @@ MediChain uses a React client, Express API, MySQL database, local upload storage
 3. Patients control access through access requests and permissions.
 4. Providers create medical records only after backend consent checks.
 5. Uploaded files are stored under `server/uploads`.
-6. SHA-256 hashes and metadata hashes are anchored through the backend service wallet.
-7. Dashboards read MySQL records and show blockchain transaction status.
+6. The record creator signs a proof transaction in MetaMask.
+7. The backend validates the mined receipt, contract, event hashes, patient pseudonym, and record type before marking the record anchored.
+8. Dashboards read MySQL records and show blockchain transaction status.
+9. The client loads non-secret runtime policy and network metadata from `/api/config`; deployment-specific values are not compiled into the UI.
 
 ## Upload And Verification Lifecycle
 

@@ -2,7 +2,8 @@ import axios from "axios";
 import type { ApiResponse } from "../types";
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "/api"
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/api",
+  timeout: Number(import.meta.env.VITE_API_TIMEOUT_MS || 30000)
 });
 
 api.interceptors.request.use((config) => {

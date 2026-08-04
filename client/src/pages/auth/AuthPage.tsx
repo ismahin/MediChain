@@ -7,20 +7,14 @@ import { api, unwrap } from "../../api/client";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Role, User } from "../../types";
 import { Button, Card, Input, Select, SecurityNote } from "../../components/ui";
+import { useSystemConfig } from "../../contexts/SystemConfigContext";
 
 const roles: Role[] = ["PATIENT", "DOCTOR", "HOSPITAL", "LABORATORY", "ADMIN"];
 const registrationRoles: Role[] = ["PATIENT", "DOCTOR", "HOSPITAL", "LABORATORY"];
-const demoAccounts = [
-  ["admin@medichain.demo", "Admin@12345", "ADMIN"],
-  ["patient@medichain.demo", "Patient@12345", "PATIENT"],
-  ["doctor@medichain.demo", "Doctor@12345", "DOCTOR"],
-  ["hospital@medichain.demo", "Hospital@12345", "HOSPITAL"],
-  ["lab@medichain.demo", "Lab@12345", "LABORATORY"]
-] as const;
-
 export function AuthPage({ mode = "login" }: { mode?: "login" | "register" }) {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, refresh } = useAuth();
+  const { config } = useSystemConfig();
   const [role, setRole] = useState<Role>("PATIENT");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -43,6 +37,7 @@ export function AuthPage({ mode = "login" }: { mode?: "login" | "register" }) {
         const result = await unwrap<{ user: User; accessToken: string; refreshToken: string }>(api.post(`/auth/register/${endpoint}`, payload));
         localStorage.setItem("medichain_access_token", result.accessToken);
         localStorage.setItem("medichain_refresh_token", result.refreshToken);
+        await refresh();
       }
       navigate("/dashboard");
     } catch (error) {
@@ -64,15 +59,15 @@ export function AuthPage({ mode = "login" }: { mode?: "login" | "register" }) {
     <div className="min-h-screen bg-gradient-to-br from-white via-sky-50 to-teal-50 px-5 py-10">
       <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="pt-10">
-          <Link to="/" className="flex items-center gap-2 text-2xl font-black text-medical-700"><HeartPulse />MediChain</Link>
+          <Link to="/" className="flex items-center gap-2 text-2xl font-black text-medical-700"><HeartPulse />{config?.appName ?? "Healthcare Portal"}</Link>
           <h1 className="mt-10 text-4xl font-black text-slate-950">{mode === "login" ? "Welcome back to your secure health workspace." : "Create a verified MediChain account."}</h1>
           <p className="mt-5 text-lg leading-8 text-slate-600">Role-specific authentication, patient consent, and blockchain-backed integrity proofs are enforced by the backend.</p>
           <div className="mt-6"><SecurityNote /></div>
-          {mode === "login" && (
+          {mode === "login" && config?.demoMode && config.demoAccounts.length > 0 && (
             <Card className="mt-6">
               <div className="font-black">Demo accounts</div>
               <div className="mt-3 grid gap-2">
-                {demoAccounts.map(([email, password, accountRole]) => (
+                {config.demoAccounts.map(({ email, password, role: accountRole }) => (
                   <button key={email} type="button" onClick={() => fill(email, password, accountRole)} className="rounded-lg bg-sky-50 px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-sky-100">{accountRole}: {email}</button>
                 ))}
               </div>

@@ -7,9 +7,8 @@ dotenv.config({ path: path.resolve(__dirname, "../server/.env") });
 dotenv.config({ path: path.resolve(__dirname, ".env"), override: true });
 
 const deployerKey = process.env.DEPLOYER_PRIVATE_KEY || process.env.BLOCKCHAIN_PRIVATE_KEY;
-const skaleBaseSepoliaRpcUrl =
-  process.env.SKALE_BASE_SEPOLIA_RPC_URL ||
-  "https://base-sepolia-testnet.skalenodes.com/v1/jubilant-horrible-ancha";
+const configuredRpcUrl = process.env.BLOCKCHAIN_DEPLOY_RPC_URL || process.env.RPC_URL;
+const configuredChainId = Number(process.env.BLOCKCHAIN_DEPLOY_CHAIN_ID || process.env.CHAIN_ID);
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -21,18 +20,11 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {},
     localhost: {
-      url: "http://127.0.0.1:8545"
+      url: process.env.LOCAL_BLOCKCHAIN_RPC_URL || "http://127.0.0.1:8545"
     },
-    sepolia: {
-      url: process.env.SEPOLIA_RPC_URL || "",
-      accounts: deployerKey ? [deployerKey] : [],
-      chainId: 11155111
-    },
-    skaleBaseSepolia: {
-      url: skaleBaseSepoliaRpcUrl,
-      accounts: deployerKey ? [deployerKey] : [],
-      chainId: 324705682
-    }
+    ...(configuredRpcUrl && Number.isInteger(configuredChainId) && configuredChainId > 0 ? {
+      configured: { url: configuredRpcUrl, accounts: deployerKey ? [deployerKey] : [], chainId: configuredChainId }
+    } : {})
   },
   etherscan: {
     apiKey: process.env.ETHERSCAN_API_KEY || ""

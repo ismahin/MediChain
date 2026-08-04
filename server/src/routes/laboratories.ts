@@ -6,11 +6,12 @@ import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { authenticate, requireRoles } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
-import { uploadTo } from "../middleware/upload.js";
-import { ApiError, ok, publicUserSelect } from "../utils/api.js";
+import { uploadTo, validateUploadedFile } from "../middleware/upload.js";
+import { ApiError, ok, patientSummarySelect, withoutStoragePath } from "../utils/api.js";
 import { hashFile, hashMetadata } from "../utils/hash.js";
-import { hasPatientAccess, patientAccessStatus } from "../services/access.js";
+import { ACCESS_CATEGORIES, hasPatientAccess, isAllowedProviderAccessCategory, isSupportedAccessCategory, patientAccessStatus } from "../services/access.js";
 import { verifyOnChain } from "../services/blockchain.js";
+import { env } from "../config/env.js";
 
 const router = Router();
 const upload = uploadTo("reports");
@@ -39,7 +40,7 @@ router.get(
 router.get(
   "/reports",
   asyncHandler(async (req, res) => {
-    ok(res, await prisma.medicalRecord.findMany({ where: { creatorUserId: req.user!.id, recordType: RecordType.LAB_REPORT }, include: { patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" } }));
+    ok(res, await prisma.medicalRecord.findMany({ where: { creatorUserId: req.user!.id, recordType: RecordType.LAB_REPORT }, omit: { filePath: true }, include: { patient: { select: patientSummarySelect } }, orderBy: { createdAt: "desc" } }));
   })
 );
 
@@ -47,13 +48,13 @@ router.get(
   "/patients/search",
   asyncHandler(async (req, res) => {
     await verifiedLab(req.user!.id);
-    const query = String(req.query.q ?? "");
+    const query = String(req.query.q ?? "").trim();
     const patients = await prisma.patientProfile.findMany({
-      where: {
-        OR: [{ healthId: { contains: query } }, { user: { fullName: { contains: query } } }]
-      },
-      include: { user: { select: { id: true, fullName: true, email: true } } },
-      take: 10
+      where: query ? {
+        OR: [{ healthId: { contains: query } }, { user: { fullName: { contains: query } } }, { user: { email: { contains: query } } }]
+      } : undefined,
+      select: { id: true, healthId: true, user: { select: { id: true, fullName: true, email: true } } },
+      orderBy: { createdAt: "desc" }
     });
     ok(res, await Promise.all(patients.map(async (patient) => ({ ...patient, accessStatus: await patientAccessStatus(req.user!.id, patient.id) }))));
   })
@@ -64,9 +65,9 @@ router.post(
   asyncHandler(async (req, res) => {
     await verifiedLab(req.user!.id);
     const body = z.object({
-      requestedCategories: z.array(z.string()).min(1),
+      requestedCategories: z.array(z.string().refine((category) => isSupportedAccessCategory(category) && isAllowedProviderAccessCategory("LABORATORY", category), "Unsupported access category")).min(1),
       reason: z.string().min(5),
-      requestedDurationHours: z.number().int().min(1).max(720)
+      requestedDurationHours: z.number().int().min(1).max(env.MAX_ACCESS_DURATION_HOURS)
     }).parse(req.body);
     const accessStatus = await patientAccessStatus(req.user!.id, req.params.patientId);
     if (accessStatus === "ACTIVE") throw new ApiError(409, "You already have active access to this patient");
@@ -92,7 +93,7 @@ router.post(
 router.get(
   "/access-requests",
   asyncHandler(async (req, res) => {
-    ok(res, await prisma.accessRequest.findMany({ where: { requesterUserId: req.user!.id }, include: { patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" }, distinct: ["patientId", "requesterUserId"] }));
+    ok(res, await prisma.accessRequest.findMany({ where: { requesterUserId: req.user!.id }, include: { patient: { select: patientSummarySelect } }, orderBy: { createdAt: "desc" }, distinct: ["patientId", "requesterUserId"] }));
   })
 );
 
@@ -102,8 +103,9 @@ router.post(
   asyncHandler(async (req, res) => {
     const lab = await verifiedLab(req.user!.id);
     if (!req.file) throw new ApiError(400, "Report file is required");
-    const body = z.object({ patientId: z.string(), category: z.string(), title: z.string(), testDate: z.string(), resultSummary: z.string().optional(), notes: z.string().optional() }).parse(req.body);
-    if (!(await hasPatientAccess(req.user!.id, body.patientId, "Diagnostic reports only"))) throw new ApiError(403, "Patient has not granted diagnostic report access");
+    validateUploadedFile(req.file);
+    const body = z.object({ patientId: z.string(), category: z.string().min(2), title: z.string().min(2), testDate: z.string().refine((value) => { const date = new Date(value); return !Number.isNaN(date.getTime()) && date <= new Date(); }, "Test date must be a valid date that is not in the future"), resultSummary: z.string().optional(), notes: z.string().optional() }).parse(req.body);
+    if (!(await hasPatientAccess(req.user!.id, body.patientId, ACCESS_CATEGORIES.DIAGNOSTIC_REPORTS))) throw new ApiError(403, "Patient has not granted diagnostic report access");
     const patient = await prisma.patientProfile.findUnique({ where: { id: body.patientId } });
     if (!patient) throw new ApiError(404, "Patient not found");
     const fileHash = await hashFile(req.file.path);
@@ -126,7 +128,7 @@ router.post(
         blockchainStatus: BlockchainStatus.PENDING
       }
     });
-    ok(res.status(201), record, "Report uploaded; confirm the blockchain proof in MetaMask");
+    ok(res.status(201), withoutStoragePath(record), "Report uploaded; confirm the blockchain proof in MetaMask");
   })
 );
 

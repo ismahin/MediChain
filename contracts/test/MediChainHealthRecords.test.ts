@@ -75,6 +75,23 @@ describe("MediChainHealthRecords", function () {
     expect(await contract.isAccessActive(patientIdHash, patientWallet.address, permissionHash)).to.equal(false);
   });
 
+  it("rejects unknown record types", async function () {
+    const { contract, provider, patientIdHash, recordHash, metadataHash } = await deployFixture();
+    await contract.addProvider(provider.address);
+    await expect(contract.connect(provider).registerRecord(patientIdHash, recordHash, metadataHash, 0))
+      .to.be.revertedWithCustomError(contract, "InvalidRecordType");
+    await expect(contract.connect(provider).registerRecord(patientIdHash, recordHash, metadataHash, 8))
+      .to.be.revertedWithCustomError(contract, "InvalidRecordType");
+  });
+
+  it("rejects expired grants and revoking unknown grants", async function () {
+    const { contract, patientWallet, patientIdHash, permissionHash } = await deployFixture();
+    await expect(contract.grantAccess(patientIdHash, patientWallet.address, permissionHash, await time.latest()))
+      .to.be.revertedWithCustomError(contract, "InvalidExpiry");
+    await expect(contract.revokeAccess(patientIdHash, patientWallet.address, permissionHash))
+      .to.be.revertedWithCustomError(contract, "AccessGrantNotFound");
+  });
+
   it("records emergency access events from providers", async function () {
     const { contract, provider, patientIdHash } = await deployFixture();
     const reasonHash = ethers.keccak256(ethers.toUtf8Bytes("emergency"));

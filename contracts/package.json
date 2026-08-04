@@ -6,10 +6,8 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
-    "deploy:sepolia": "hardhat run scripts/deploy.ts --network sepolia",
-    "deploy:skale": "hardhat run scripts/deploy.ts --network skaleBaseSepolia",
-    "verify:deployment": "hardhat run scripts/verifyDeployment.ts --network sepolia",
-    "verify:skale": "hardhat run scripts/verifyDeployment.ts --network skaleBaseSepolia"
+    "deploy:configured": "hardhat run scripts/deploy.ts --network configured",
+    "verify:configured": "hardhat run scripts/verifyDeployment.ts --network configured"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.1.0",

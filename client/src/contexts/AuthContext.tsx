@@ -30,6 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setProfile(me.profile);
     } catch {
       localStorage.removeItem("medichain_access_token");
+      localStorage.removeItem("medichain_refresh_token");
       setUser(null);
       setProfile(null);
     } finally {

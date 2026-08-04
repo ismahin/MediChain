@@ -21,14 +21,27 @@ export type MedicalRecord = {
   patientId: string;
   recordType: string;
   title: string;
-  description?: string;
+  description?: string | null;
   fileHash: string;
   metadataHash: string;
   blockchainStatus: "PENDING" | "ANCHORED" | "VERIFIED" | "FAILED" | "RETRYING";
-  blockchainTxHash?: string;
-  blockchainBlockNumber?: number;
+  blockchainTxHash?: string | null;
+  blockchainBlockNumber?: number | null;
+  blockchainTimestamp?: string | null;
+  blockchainError?: string | null;
   recordDate: string;
+  originalFileName?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
   creator?: User;
+  patient?: {
+    id: string;
+    healthId: string;
+    bloodGroup?: string | null;
+    user: Pick<User, "id" | "fullName" | "email">;
+  };
   prescription?: {
     id: string;
     diagnosis: string;

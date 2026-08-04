@@ -6,6 +6,12 @@ export const publicUserSelect = {
   walletAddress: true, isActive: true, createdAt: true, updatedAt: true
 } satisfies Prisma.UserSelect;
 
+export const patientSummarySelect = {
+  id: true,
+  healthId: true,
+  user: { select: { id: true, fullName: true, email: true } }
+} satisfies Prisma.PatientProfileSelect;
+
 export function ok<T>(res: Response, data: T, message = "OK") {
   return res.json({ success: true, message, data });
 }
@@ -37,4 +43,9 @@ export function toPublicUser(user: {
     walletAddress: user.walletAddress,
     isActive: user.isActive
   };
+}
+
+export function withoutStoragePath<T extends { filePath?: unknown }>(record: T) {
+  const { filePath: _filePath, ...safe } = record;
+  return safe;
 }

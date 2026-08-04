@@ -8,6 +8,7 @@ import { asyncHandler } from "../middleware/asyncHandler.js";
 import { authenticate, signAccessToken, signRefreshToken } from "../middleware/auth.js";
 import { ApiError, ok, toPublicUser } from "../utils/api.js";
 import { env } from "../config/env.js";
+import { generateHealthId } from "../utils/healthId.js";
 
 const router = Router();
 
@@ -15,14 +16,19 @@ const baseAuth = {
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8),
   phone: z.string().optional(),
-  walletAddress: z.string().optional()
+  walletAddress: z.string().trim().refine((value) => value === "" || /^0x[0-9a-fA-F]{40}$/.test(value), "Wallet address must be a valid 0x address").transform((value) => value || undefined).optional()
 };
+
+const pastDateString = z.string().refine((value) => {
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date < new Date();
+}, "Date must be a valid date in the past");
 
 const patientSchema = z.object({
   ...baseAuth,
   fullName: z.string().min(2),
   confirmPassword: z.string().min(8),
-  dateOfBirth: z.string(),
+  dateOfBirth: pastDateString,
   gender: z.string(),
   nidOrBirthCertificate: z.string().min(4),
   bloodGroup: z.string(),
@@ -46,17 +52,12 @@ function ensurePasswords(password: string, confirmPassword: string) {
   if (password !== confirmPassword) throw new ApiError(400, "Passwords do not match");
 }
 
-async function nextHealthId() {
-  const count = await prisma.patientProfile.count();
-  return `MCH-2026-${String(count + 1).padStart(6, "0")}`;
-}
-
 router.post(
   "/register/patient",
   asyncHandler(async (req, res) => {
     const body = patientSchema.parse(req.body);
     ensurePasswords(body.password, body.confirmPassword);
-    const passwordHash = await bcrypt.hash(body.password, 12);
+    const passwordHash = await bcrypt.hash(body.password, env.BCRYPT_ROUNDS);
     const user = await prisma.user.create({
       data: {
         fullName: body.fullName,
@@ -67,7 +68,7 @@ router.post(
         walletAddress: body.walletAddress,
         patientProfile: {
           create: {
-            healthId: await nextHealthId(),
+            healthId: await generateHealthId(),
             nidOrBirthCertificate: body.nidOrBirthCertificate,
             dateOfBirth: new Date(body.dateOfBirth),
             gender: body.gender,
@@ -98,7 +99,7 @@ router.post(
       organizationName: z.string().min(2)
     }).parse(req.body);
     ensurePasswords(body.password, body.confirmPassword);
-    const passwordHash = await bcrypt.hash(body.password, 12);
+    const passwordHash = await bcrypt.hash(body.password, env.BCRYPT_ROUNDS);
     const user = await prisma.user.create({
       data: {
         fullName: body.fullName,
@@ -127,7 +128,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const body = providerSchema.extend({ fullName: z.string().min(2), licenseNumber: z.string().min(3), address: z.string().min(5) }).parse(req.body);
     ensurePasswords(body.password, body.confirmPassword);
-    const passwordHash = await bcrypt.hash(body.password, 12);
+    const passwordHash = await bcrypt.hash(body.password, env.BCRYPT_ROUNDS);
     const user = await prisma.user.create({
       data: {
         fullName: body.fullName,
@@ -149,7 +150,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const body = providerSchema.extend({ fullName: z.string().min(2), licenseNumber: z.string().min(3), address: z.string().min(5) }).parse(req.body);
     ensurePasswords(body.password, body.confirmPassword);
-    const passwordHash = await bcrypt.hash(body.password, 12);
+    const passwordHash = await bcrypt.hash(body.password, env.BCRYPT_ROUNDS);
     const user = await prisma.user.create({
       data: {
         fullName: body.fullName,
@@ -194,6 +195,19 @@ router.post(
 );
 
 router.post("/logout", authenticate, (_req, res) => ok(res, null, "Logged out"));
+
+router.post(
+  "/change-password",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const body = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(8), confirmPassword: z.string().min(8) }).parse(req.body);
+    ensurePasswords(body.newPassword, body.confirmPassword);
+    if (body.currentPassword === body.newPassword) throw new ApiError(400, "New password must be different from the current password");
+    if (!(await bcrypt.compare(body.currentPassword, req.user!.passwordHash))) throw new ApiError(400, "Current password is incorrect");
+    await prisma.user.update({ where: { id: req.user!.id }, data: { passwordHash: await bcrypt.hash(body.newPassword, env.BCRYPT_ROUNDS) } });
+    ok(res, null, "Password changed successfully");
+  })
+);
 
 router.get(
   "/me",

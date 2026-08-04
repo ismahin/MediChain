@@ -91,6 +91,12 @@ enum DiagnosticOrderStatus {
   CANCELLED
 }
 
+enum HospitalDoctorStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id            String   @id @default(cuid())
   fullName      String
@@ -107,11 +113,11 @@ model User {
   doctorProfile     DoctorProfile?
   hospitalProfile   HospitalProfile?
   laboratoryProfile LaboratoryProfile?
-  createdRecords    MedicalRecord[]        @relation("RecordCreator")
-  accessRequests    AccessRequest[]        @relation("AccessRequester")
-  permissions       AccessPermission[]     @relation("AccessGrantee")
-  emergencyLogs     EmergencyAccessLog[]   @relation("EmergencyRequester")
-  auditLogs         AuditLog[]             @relation("AuditActor")
+  createdRecords    MedicalRecord[]      @relation("RecordCreator")
+  accessRequests    AccessRequest[]      @relation("AccessRequester")
+  permissions       AccessPermission[]   @relation("AccessGrantee")
+  emergencyLogs     EmergencyAccessLog[] @relation("EmergencyRequester")
+  auditLogs         AuditLog[]           @relation("AuditActor")
   notifications     Notification[]
 }
 
@@ -135,14 +141,14 @@ model PatientProfile {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  records        MedicalRecord[]
-  prescriptions  Prescription[]
-  requests       AccessRequest[]
-  permissions    AccessPermission[]
-  emergencyLogs  EmergencyAccessLog[]
-  auditLogs      AuditLog[]
-  careCases      CareCase[]
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  records       MedicalRecord[]
+  prescriptions Prescription[]
+  requests      AccessRequest[]
+  permissions   AccessPermission[]
+  emergencyLogs EmergencyAccessLog[]
+  auditLogs     AuditLog[]
+  careCases     CareCase[]
 
   @@index([healthId])
 }
@@ -211,14 +217,17 @@ model DiagnosticOrder {
 }
 
 model HospitalDoctor {
-  id             String   @id @default(cuid())
+  id             String               @id @default(cuid())
   hospitalUserId String
   doctorUserId   String
-  createdAt      DateTime @default(now())
+  status         HospitalDoctorStatus @default(PENDING)
+  respondedAt    DateTime?
+  createdAt      DateTime             @default(now())
 
   @@unique([hospitalUserId, doctorUserId])
   @@index([hospitalUserId])
   @@index([doctorUserId])
+  @@index([doctorUserId, status])
 }
 
 model DoctorProfile {
@@ -291,8 +300,8 @@ model MedicalRecord {
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
 
-  patient      PatientProfile         @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  creator      User                   @relation("RecordCreator", fields: [creatorUserId], references: [id])
+  patient      PatientProfile          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  creator      User                    @relation("RecordCreator", fields: [creatorUserId], references: [id])
   prescription Prescription?
   transactions BlockchainTransaction[]
 
@@ -319,7 +328,7 @@ model Prescription {
 }
 
 model PrescriptionMedication {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   prescriptionId String
   medicineName   String
   dosage         String
@@ -350,17 +359,17 @@ model AccessRequest {
 }
 
 model AccessPermission {
-  id                 String           @id @default(cuid())
-  patientId          String
-  granteeUserId      String
-  grantedCategories  Json
-  grantedAt          DateTime         @default(now())
-  expiresAt          DateTime
-  revokedAt          DateTime?
-  status             PermissionStatus @default(ACTIVE)
-  permissionHash     String           @unique
-  blockchainTxHash   String?
-  blockchainStatus   BlockchainStatus @default(PENDING)
+  id                String           @id @default(cuid())
+  patientId         String
+  granteeUserId     String
+  grantedCategories Json
+  grantedAt         DateTime         @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  status            PermissionStatus @default(ACTIVE)
+  permissionHash    String           @unique
+  blockchainTxHash  String?
+  blockchainStatus  BlockchainStatus @default(PENDING)
 
   patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
   grantee User           @relation("AccessGrantee", fields: [granteeUserId], references: [id])
@@ -393,7 +402,7 @@ model AuditLog {
   ipAddress   String?
   createdAt   DateTime @default(now())
 
-  actor  User?           @relation("AuditActor", fields: [actorUserId], references: [id])
+  actor   User?           @relation("AuditActor", fields: [actorUserId], references: [id])
   patient PatientProfile? @relation(fields: [patientId], references: [id])
 
   @@index([actorUserId])
@@ -416,16 +425,16 @@ model Notification {
 }
 
 model BlockchainTransaction {
-  id             String            @id @default(cuid())
-  recordId       String?
+  id              String            @id @default(cuid())
+  recordId        String?
   transactionType TransactionType
-  txHash         String?
-  blockNumber    Int?
-  network        String            @default("sepolia")
-  status         TransactionStatus @default(PENDING)
-  errorMessage   String?           @db.Text
-  createdAt      DateTime          @default(now())
-  confirmedAt    DateTime?
+  txHash          String?
+  blockNumber     Int?
+  network         String
+  status          TransactionStatus @default(PENDING)
+  errorMessage    String?           @db.Text
+  createdAt       DateTime          @default(now())
+  confirmedAt     DateTime?
 
   record MedicalRecord? @relation(fields: [recordId], references: [id], onDelete: SetNull)
 

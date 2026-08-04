@@ -16,8 +16,7 @@
     "db:seed": "npm run db:seed -w server",
     "contract:compile": "npm run compile -w contracts",
     "contract:test": "npm run test -w contracts",
-    "contract:deploy:sepolia": "npm run deploy:sepolia -w contracts",
-    "contract:deploy:skale": "npm run deploy:skale -w contracts"
+    "contract:deploy": "npm run deploy:configured -w contracts"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

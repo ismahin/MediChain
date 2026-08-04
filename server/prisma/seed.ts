@@ -9,11 +9,12 @@ import {
   VerificationStatus
 } from "@prisma/client";
 import { sha256Hex, stableStringify } from "../src/utils/hash.js";
+import { demoAccounts, env } from "../src/config/env.js";
 
 const prisma = new PrismaClient();
 
 async function upsertUser(email: string, password: string, data: Omit<Parameters<typeof prisma.user.upsert>[0]["create"], "passwordHash" | "email">) {
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS);
   return prisma.user.upsert({
     where: { email },
     update: { ...data, passwordHash },
@@ -21,19 +22,34 @@ async function upsertUser(email: string, password: string, data: Omit<Parameters
   });
 }
 
+function demoCredential(role: Role) {
+  const account = demoAccounts.find((candidate) => candidate.role === role);
+  if (!account) throw new Error(`Missing ${role} credentials in DEMO_ACCOUNTS_JSON`);
+  return account;
+}
+
 async function main() {
-  const admin = await upsertUser("admin@medichain.demo", "Admin@12345", {
+  if (!env.DEMO_MODE) {
+    console.log("Demo seeding is disabled. Set DEMO_MODE=true and configure DEMO_ACCOUNTS_JSON to install demo fixtures.");
+    return;
+  }
+  const adminCredential = demoCredential(Role.ADMIN);
+  const patientCredential = demoCredential(Role.PATIENT);
+  const doctorCredential = demoCredential(Role.DOCTOR);
+  const hospitalCredential = demoCredential(Role.HOSPITAL);
+  const laboratoryCredential = demoCredential(Role.LABORATORY);
+
+  const admin = await upsertUser(adminCredential.email, adminCredential.password, {
     fullName: "MediChain Admin",
     phone: "+8801700000001",
     role: Role.ADMIN,
     isActive: true
   });
 
-  const patientUser = await upsertUser("patient@medichain.demo", "Patient@12345", {
+  const patientUser = await upsertUser(patientCredential.email, patientCredential.password, {
     fullName: "Ayesha Rahman",
     phone: "+8801700000002",
     role: Role.PATIENT,
-    walletAddress: "0x0000000000000000000000000000000000000001",
     isActive: true
   });
 
@@ -42,7 +58,7 @@ async function main() {
     update: {},
     create: {
       userId: patientUser.id,
-      healthId: "MCH-2026-000001",
+      healthId: `${env.HEALTH_ID_PREFIX}-DEMO-000001`,
       nidOrBirthCertificate: "19981234567000123",
       dateOfBirth: new Date("1998-04-12"),
       gender: "Female",
@@ -59,11 +75,10 @@ async function main() {
     }
   });
 
-  const doctorUser = await upsertUser("doctor@medichain.demo", "Doctor@12345", {
+  const doctorUser = await upsertUser(doctorCredential.email, doctorCredential.password, {
     fullName: "Dr. Farhan Ahmed",
     phone: "+8801700000003",
     role: Role.DOCTOR,
-    walletAddress: "0x0000000000000000000000000000000000000002",
     isActive: true
   });
 
@@ -81,11 +96,10 @@ async function main() {
     }
   });
 
-  const hospitalUser = await upsertUser("hospital@medichain.demo", "Hospital@12345", {
+  const hospitalUser = await upsertUser(hospitalCredential.email, hospitalCredential.password, {
     fullName: "CityCare Hospital",
     phone: "+8801700000004",
     role: Role.HOSPITAL,
-    walletAddress: "0x0000000000000000000000000000000000000003",
     isActive: true
   });
 
@@ -103,11 +117,10 @@ async function main() {
     }
   });
 
-  const labUser = await upsertUser("lab@medichain.demo", "Lab@12345", {
+  const labUser = await upsertUser(laboratoryCredential.email, laboratoryCredential.password, {
     fullName: "Prime Diagnostics Lab",
     phone: "+8801700000005",
     role: Role.LABORATORY,
-    walletAddress: "0x0000000000000000000000000000000000000004",
     isActive: true
   });
 
@@ -142,7 +155,7 @@ async function main() {
       creatorUserId: doctorUser.id,
       recordType: RecordType.PRESCRIPTION,
       title: "Demo / pending deployment - Allergy prescription",
-      description: "Seeded demo prescription metadata. Anchor after Sepolia deployment.",
+      description: "Seeded demo prescription metadata. Anchor after blockchain deployment.",
       recordDate: new Date(),
       fileHash,
       metadataHash,
@@ -175,35 +188,42 @@ async function main() {
     }
   });
 
-  await prisma.accessRequest.create({
-    data: {
-      patientId: patient.id,
-      requesterUserId: doctorUser.id,
-      requesterRole: Role.DOCTOR,
-      requestedCategories: ["Prescriptions only", "Allergies and emergency info"],
-      reason: "Follow-up consultation review",
-      requestedDurationHours: 72,
-      status: AccessRequestStatus.PENDING
-    }
+  const seedRequest = await prisma.accessRequest.findFirst({
+    where: { patientId: patient.id, requesterUserId: doctorUser.id, reason: "Follow-up consultation review" }
   });
-
-  await prisma.notification.createMany({
-    data: [
-      {
-        userId: patientUser.id,
-        title: "Welcome to MediChain",
-        message: "Your Health ID MCH-2026-000001 is ready.",
-        type: NotificationType.SUCCESS
-      },
-      {
-        userId: patientUser.id,
-        title: "Access request pending",
-        message: "Dr. Farhan Ahmed requested limited access to your records.",
-        type: NotificationType.INFO,
-        relatedEntityType: "AccessRequest"
+  if (!seedRequest) {
+    await prisma.accessRequest.create({
+      data: {
+        patientId: patient.id,
+        requesterUserId: doctorUser.id,
+        requesterRole: Role.DOCTOR,
+        requestedCategories: ["Prescriptions only", "Allergies and emergency info"],
+        reason: "Follow-up consultation review",
+        requestedDurationHours: Math.min(72, env.MAX_ACCESS_DURATION_HOURS),
+        status: AccessRequestStatus.PENDING
       }
-    ]
-  });
+    });
+  }
+
+  const notifications = [
+    {
+      userId: patientUser.id,
+      title: "Welcome to MediChain",
+      message: `Your Health ID ${patient.healthId} is ready.`,
+      type: NotificationType.SUCCESS
+    },
+    {
+      userId: patientUser.id,
+      title: "Access request pending",
+      message: "Dr. Farhan Ahmed requested limited access to your records.",
+      type: NotificationType.INFO,
+      relatedEntityType: "AccessRequest"
+    }
+  ];
+  for (const notification of notifications) {
+    const existing = await prisma.notification.findFirst({ where: { userId: notification.userId, title: notification.title, message: notification.message } });
+    if (!existing) await prisma.notification.create({ data: notification });
+  }
 }
 
 main()

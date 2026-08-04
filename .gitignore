@@ -12,6 +12,10 @@ server/uploads/*
 !server/uploads/prescriptions/
 !server/uploads/profile-documents/
 !server/uploads/temp/
+server/uploads/reports/*
+server/uploads/prescriptions/*
+server/uploads/profile-documents/*
+server/uploads/temp/*
 !server/uploads/reports/.gitkeep
 !server/uploads/prescriptions/.gitkeep
 !server/uploads/profile-documents/.gitkeep

@@ -15,6 +15,9 @@ contract MediChainHealthRecords is AccessControl {
     error RecordNotFound(bytes32 recordHash);
     error InvalidHash();
     error InvalidAddress();
+    error InvalidExpiry();
+    error AccessGrantNotFound();
+    error InvalidRecordType();
 
     struct RecordProof {
         bytes32 patientIdHash;
@@ -65,6 +68,7 @@ contract MediChainHealthRecords is AccessControl {
 
     function registerRecord(bytes32 patientIdHash, bytes32 recordHash, bytes32 metadataHash, uint8 recordType) external onlyRoleOrAdmin(PROVIDER_ROLE) {
         if (patientIdHash == bytes32(0) || recordHash == bytes32(0) || metadataHash == bytes32(0)) revert InvalidHash();
+        if (recordType == 0 || recordType > 7) revert InvalidRecordType();
         if (records[recordHash].timestamp != 0) revert RecordAlreadyExists(recordHash);
 
         records[recordHash] = RecordProof({
@@ -83,6 +87,7 @@ contract MediChainHealthRecords is AccessControl {
     function grantAccess(bytes32 patientIdHash, address grantee, bytes32 permissionHash, uint256 expiresAt) external onlyRole(SYSTEM_ADMIN_ROLE) {
         if (patientIdHash == bytes32(0) || permissionHash == bytes32(0)) revert InvalidHash();
         if (grantee == address(0)) revert InvalidAddress();
+        if (expiresAt <= block.timestamp) revert InvalidExpiry();
 
         bytes32 key = _accessKey(patientIdHash, grantee, permissionHash);
         accessGrants[key] = AccessGrantProof({
@@ -99,6 +104,7 @@ contract MediChainHealthRecords is AccessControl {
 
     function revokeAccess(bytes32 patientIdHash, address grantee, bytes32 permissionHash) external onlyRole(SYSTEM_ADMIN_ROLE) {
         bytes32 key = _accessKey(patientIdHash, grantee, permissionHash);
+        if (accessGrants[key].timestamp == 0) revert AccessGrantNotFound();
         accessGrants[key].revoked = true;
         emit AccessRevoked(patientIdHash, grantee, permissionHash);
     }

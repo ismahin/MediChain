@@ -2,7 +2,7 @@
 
 Blockchain-Based Lifelong Digital Health Record System.
 
-MediChain is a university/demo healthcare coordination platform with patient-controlled consent, appointments, hospital-managed care cases, doctor sessions, diagnostic laboratory handoffs, secure local file uploads, SHA-256 document hashing, MySQL operational data, and SKALE Base Sepolia proof anchoring.
+MediChain is a configurable healthcare coordination platform with patient-controlled consent, appointments, hospital-managed care cases, doctor sessions, diagnostic laboratory handoffs, secure file uploads, SHA-256 document hashing, MySQL operational data, and blockchain proof anchoring.
 
 > Stored securely off-chain; integrity and ownership proof anchored on blockchain.
 
@@ -10,7 +10,7 @@ MediChain is a university/demo healthcare coordination platform with patient-con
 
 - Patient, doctor, hospital, laboratory, and admin roles.
 - JWT authentication with bcrypt password hashing.
-- Patient Health IDs like `MCH-2026-000001`.
+- Configurable, automatically generated patient Health IDs.
 - Consent requests, approvals, limited categories, expiry, and revocation.
 - Patient appointment booking with problem details, preferred providers, and previous document uploads.
 - Hospital appointment queues, explicit doctor staff rosters, and patient-to-doctor assignment.
@@ -18,8 +18,8 @@ MediChain is a university/demo healthcare coordination platform with patient-con
 - Hospital-to-laboratory test assignment with completed report delivery to patients and doctors.
 - Prescriptions, consultations, hospital records, diagnostic report uploads, and audit logs.
 - Local file storage under `server/uploads/`, with authenticated download routes only.
-- Solidity proof contract on SKALE Base Sepolia for record hashes, access proofs, and emergency events.
-- Responsive healthcare dashboard with MetaMask-signed SKALE Base Sepolia transactions.
+- Solidity proof contract on a configured EVM network for record hashes, access proofs, and emergency events.
+- Responsive healthcare dashboard with MetaMask-signed transactions.
 
 ## Architecture
 
@@ -28,9 +28,9 @@ flowchart LR
   Client[React + Vite Client] --> API[Express API]
   API --> DB[(MySQL + Prisma)]
   API --> Files[Local uploads]
-  API --> Chain[SKALE Base Sepolia RPC]
+  API --> Chain[Configured EVM RPC]
   Wallet[MetaMask] --> Chain
-  Client --> Explorer[Sepolia Explorer]
+  Client --> Explorer[Configured Explorer]
 ```
 
 Files and readable health data stay off-chain. Only hashes, pseudonymous identifiers, timestamps, permission metadata hashes, and transaction metadata are stored on chain.
@@ -55,15 +55,19 @@ Backend: `http://localhost:5000`
 
 ## Required Environment Values
 
-Fill these manually before real SKALE Base Sepolia anchoring:
+Runtime behavior is supplied by validated server configuration. Fill these before deployment:
 
-- `server/.env`: `DATABASE_URL`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `RPC_URL`, `BLOCKCHAIN_PRIVATE_KEY`, `CONTRACT_ADDRESS`
-- `client/.env`: `VITE_API_BASE_URL`, `VITE_CHAIN_ID`, `VITE_CONTRACT_ADDRESS`, `VITE_SEPOLIA_EXPLORER_BASE_URL`
-- `contracts/.env`: `SKALE_BASE_SEPOLIA_RPC_URL`, `DEPLOYER_PRIVATE_KEY`
+- `server/.env`: database/JWT values, application policies, optional demo settings, and all blockchain network metadata.
+- `client/.env`: only `VITE_API_BASE_URL`; public runtime settings come from `/api/config`.
+- `contracts/.env`: `BLOCKCHAIN_DEPLOY_RPC_URL`, `BLOCKCHAIN_DEPLOY_CHAIN_ID`, `BLOCKCHAIN_EXPLORER_URL`, and `DEPLOYER_PRIVATE_KEY`.
 
 Never commit real `.env` files or private keys.
 
-## Demo Accounts
+## Optional Demo Mode
+
+Demo identities exist only in the seed path and environment configuration. Set `DEMO_MODE=true` and define `DEMO_ACCOUNTS_JSON` before running `npm run db:seed`. With demo mode disabled, credentials are neither seeded nor exposed on the login screen.
+
+The example environment contains these replaceable local-development values:
 
 | Role | Email | Password |
 | --- | --- | --- |
@@ -73,17 +77,16 @@ Never commit real `.env` files or private keys.
 | Hospital | `hospital@medichain.demo` | `Hospital@12345` |
 | Laboratory | `lab@medichain.demo` | `Lab@12345` |
 
-## SKALE Base Sepolia Deployment
+## Blockchain Deployment
 
 ```bash
 cp contracts/.env.example contracts/.env
-npm run contract:deploy:skale
+npm run contract:deploy
 ```
 
-Deployment output is saved to `contracts/deployments/skaleBaseSepolia.json`. Copy the deployed contract address into:
+Deployment output is saved by configured Hardhat network name. Copy the deployed contract address into:
 
 - `server/.env` as `CONTRACT_ADDRESS`
-- `client/.env` as `VITE_CONTRACT_ADDRESS`
 
 Record creators submit proof transactions in MetaMask. After confirmation, the backend independently validates the transaction receipt and exact `RecordRegistered` event before updating database status. The connected wallet must have `PROVIDER_ROLE` (or `SYSTEM_ADMIN_ROLE`) on the deployed contract.
 
@@ -97,7 +100,7 @@ npm run db:migrate
 npm run db:seed
 npm run contract:compile
 npm run contract:test
-npm run contract:deploy:skale
+npm run contract:deploy
 ```
 
 ## Document Verification
@@ -131,12 +134,12 @@ Doctor membership is explicit and is not inferred from a free-text organization 
 - Not production-ready medical software.
 - Not HIPAA-certified.
 - No real emergency healthcare guarantee.
-- Seeded blockchain records remain "Demo / pending deployment" until a SKALE Base Sepolia contract and authorized wallet are configured.
+- Demo fixtures are isolated to `server/prisma/seed.ts` and are installed only when demo mode is enabled.
 
 ## Troubleshooting
 
 - If Prisma cannot connect, run `docker compose up -d` and verify `DATABASE_URL`.
 - The bundled Docker MySQL is exposed on host port `3308` to avoid conflicting with a locally installed MySQL service.
 - If blockchain status stays pending, fill `RPC_URL`, `BLOCKCHAIN_PRIVATE_KEY`, and `CONTRACT_ADDRESS`.
-- If MetaMask reports the wrong network, switch to SKALE Base Sepolia (chain ID `324705682`).
-- If uploads fail, verify file type is PDF, PNG, JPG, or JPEG and under 10 MB.
+- If MetaMask reports the wrong network, verify the chain name, ID, RPC URL, currency, and explorer values in `server/.env`.
+- If uploads fail, verify the allowed file type and `UPLOAD_MAX_BYTES` policy.

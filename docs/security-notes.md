@@ -6,7 +6,7 @@ Passwords are hashed with bcrypt. The API uses JWT access tokens and role middle
 
 ## Files
 
-Uploads use random filenames, MIME validation, and a 10 MB size limit. The upload directory is not exposed statically. Downloads go through authenticated routes and consent checks.
+Uploads use random filenames, MIME allow-listing, PDF/PNG/JPEG signature validation, and a 10 MB size limit. Rejected uploads are removed, and the upload directory is not exposed statically. Downloads go through authenticated routes and category-scoped consent checks.
 
 ## Blockchain Keys
 

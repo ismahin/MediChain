@@ -5,6 +5,7 @@ import { prisma } from "../config/prisma.js";
 import { authenticate, requireRoles } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
 import { ApiError, ok, publicUserSelect } from "../utils/api.js";
+import { env } from "../config/env.js";
 
 const router = Router();
 router.use(authenticate, requireRoles(Role.ADMIN));
@@ -26,7 +27,7 @@ router.get(
   })
 );
 
-router.get("/users", asyncHandler(async (_req, res) => ok(res, await prisma.user.findMany({ select: { ...publicUserSelect, patientProfile: true, doctorProfile: true, hospitalProfile: true, laboratoryProfile: true }, orderBy: { createdAt: "desc" } }))));
+router.get("/users", asyncHandler(async (_req, res) => ok(res, await prisma.user.findMany({ select: { ...publicUserSelect, patientProfile: { select: { id: true, healthId: true } }, doctorProfile: true, hospitalProfile: true, laboratoryProfile: true }, orderBy: { createdAt: "desc" } }))));
 
 router.post("/users/:id/suspend", asyncHandler(async (req, res) => {
   const body = z.object({ isActive: z.boolean() }).parse(req.body);
@@ -92,17 +93,17 @@ router.get("/medical-records", asyncHandler(async (_req, res) => ok(res, await p
     creator: { select: { fullName: true, email: true, role: true } }
   },
   orderBy: { createdAt: "desc" },
-  take: 200
+  take: env.ADMIN_LIST_LIMIT
 }))));
 
 router.get("/access-permissions", asyncHandler(async (_req, res) => ok(res, await prisma.accessPermission.findMany({
-  include: { patient: { include: { user: { select: publicUserSelect } } }, grantee: { select: publicUserSelect } },
+  include: { patient: { select: { id: true, healthId: true, user: { select: { id: true, fullName: true, email: true } } } }, grantee: { select: publicUserSelect } },
   orderBy: { grantedAt: "desc" },
-  take: 200
+  take: env.ADMIN_LIST_LIMIT
 }))));
 
-router.get("/audit-logs", asyncHandler(async (_req, res) => ok(res, await prisma.auditLog.findMany({ include: { actor: { select: publicUserSelect }, patient: true }, orderBy: { createdAt: "desc" }, take: 200 }))));
-router.get("/emergency-logs", asyncHandler(async (_req, res) => ok(res, await prisma.emergencyAccessLog.findMany({ include: { requester: { select: publicUserSelect }, patient: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "desc" } }))));
-router.get("/blockchain-transactions", asyncHandler(async (_req, res) => ok(res, await prisma.blockchainTransaction.findMany({ include: { record: true }, orderBy: { createdAt: "desc" } }))));
+router.get("/audit-logs", asyncHandler(async (_req, res) => ok(res, await prisma.auditLog.findMany({ include: { actor: { select: publicUserSelect }, patient: { select: { id: true, healthId: true } } }, orderBy: { createdAt: "desc" }, take: env.ADMIN_LIST_LIMIT }))));
+router.get("/emergency-logs", asyncHandler(async (_req, res) => ok(res, await prisma.emergencyAccessLog.findMany({ include: { requester: { select: publicUserSelect }, patient: { select: { id: true, healthId: true, user: { select: { id: true, fullName: true, email: true } } } } }, orderBy: { createdAt: "desc" } }))));
+router.get("/blockchain-transactions", asyncHandler(async (_req, res) => ok(res, await prisma.blockchainTransaction.findMany({ include: { record: { select: { id: true, title: true, recordType: true, blockchainStatus: true } } }, orderBy: { createdAt: "desc" } }))));
 
 export default router;

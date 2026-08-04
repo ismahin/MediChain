@@ -5,8 +5,14 @@ import { env } from "../config/env.js";
 import { mediChainAbi } from "../blockchain/abi.js";
 import { sha256Bytes32, sha256Hex, stableStringify } from "../utils/hash.js";
 
+const recordTypes: Record<string, number> = { CONSULTATION: 1, PRESCRIPTION: 2, LAB_REPORT: 3, ADMISSION: 4, DISCHARGE: 4, SURGERY: 5, VACCINATION: 6, DOCUMENT: 7 };
+
+export function recordTypeCode(recordType: string) {
+  return recordTypes[recordType] ?? 0;
+}
+
 function configured() {
-  return Boolean(env.RPC_URL && env.BLOCKCHAIN_PRIVATE_KEY && env.CONTRACT_ADDRESS);
+  return Boolean(env.RPC_URL && env.BLOCKCHAIN_PRIVATE_KEY && env.CONTRACT_ADDRESS && env.CHAIN_ID);
 }
 
 function getContract() {
@@ -25,17 +31,120 @@ export function permissionHash(input: unknown) {
 }
 
 export function recordProofInput(record: { patient: { healthId: string }; fileHash: string; metadataHash: string; recordType: string }) {
-  const recordTypes: Record<string, number> = { CONSULTATION: 1, PRESCRIPTION: 2, LAB_REPORT: 3, ADMISSION: 4, DISCHARGE: 4, SURGERY: 5, VACCINATION: 6, DOCUMENT: 7 };
   return {
     contractAddress: env.CONTRACT_ADDRESS,
     chainId: env.CHAIN_ID,
+    network: {
+      name: env.BLOCKCHAIN_NETWORK_NAME,
+      rpcUrl: env.BLOCKCHAIN_PUBLIC_RPC_URL ?? env.RPC_URL,
+      explorerUrl: env.BLOCKCHAIN_EXPLORER_URL,
+      nativeCurrency: { name: env.BLOCKCHAIN_CURRENCY_NAME, symbol: env.BLOCKCHAIN_CURRENCY_SYMBOL, decimals: env.BLOCKCHAIN_CURRENCY_DECIMALS }
+    },
     method: "registerRecord" as const,
-    args: [patientIdHash(record.patient.healthId), `0x${record.fileHash}`, `0x${record.metadataHash}`, recordTypes[record.recordType] ?? 0]
+    args: [patientIdHash(record.patient.healthId), `0x${record.fileHash}`, `0x${record.metadataHash}`, recordTypeCode(record.recordType)]
   };
 }
 
+type ReconcileRecord = {
+  id: string;
+  fileHash: string;
+  metadataHash: string;
+  recordType: string;
+  blockchainStatus: BlockchainStatus;
+  blockchainTxHash: string | null;
+  patient: { healthId: string };
+};
+
+async function blockNearTimestamp(provider: JsonRpcProvider, timestamp: number) {
+  let low = 0;
+  let high = await provider.getBlockNumber();
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const block = await provider.getBlock(middle);
+    if (!block || block.timestamp < timestamp) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/**
+ * Makes record anchoring idempotent when a transaction succeeded on-chain but
+ * the browser never completed the database confirmation request.
+ */
+export async function reconcileExistingRecordProof(record: ReconcileRecord) {
+  if (!env.RPC_URL || !env.CONTRACT_ADDRESS || !env.CHAIN_ID) return null;
+
+  const provider = new JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
+  const contract = new Contract(env.CONTRACT_ADDRESS, mediChainAbi, provider);
+  const expectedPatientHash = patientIdHash(record.patient.healthId).toLowerCase();
+  const expectedRecordHash = `0x${record.fileHash}`.toLowerCase();
+  const expectedMetadataHash = `0x${record.metadataHash}`.toLowerCase();
+  const expectedRecordType = recordTypeCode(record.recordType);
+  const proof = await contract.verifyRecord(expectedRecordHash);
+  if (!Boolean(proof.exists)) return null;
+
+  if (String(proof.patientIdHash).toLowerCase() !== expectedPatientHash || Number(proof.recordType) !== expectedRecordType || !Boolean(proof.active)) {
+    throw new Error("This record hash is already used by a different or inactive blockchain proof.");
+  }
+
+  let txHash = record.blockchainTxHash;
+  let blockNumber: number | null = null;
+  try {
+    const iface = new Interface(mediChainAbi);
+    const event = iface.getEvent("RecordRegistered");
+    if (!event) throw new Error("RecordRegistered event is missing from the contract interface.");
+    const latestBlock = await provider.getBlockNumber();
+    const approximateBlock = await blockNearTimestamp(provider, Number(proof.timestamp));
+    const logs = await provider.getLogs({
+      address: env.CONTRACT_ADDRESS,
+      topics: [event.topicHash, expectedPatientHash, expectedRecordHash],
+      // Public RPC providers commonly restrict historical log ranges, so
+      // locate the event by timestamp instead of scanning the entire chain.
+      fromBlock: Math.max(0, approximateBlock - 500),
+      toBlock: Math.min(latestBlock, approximateBlock + 500)
+    });
+    if (logs.length > 0) {
+      const matchingLog = logs.find((log) => {
+        const parsed = iface.parseLog(log);
+        return parsed && String(parsed.args.metadataHash).toLowerCase() === expectedMetadataHash && Number(parsed.args.recordType) === expectedRecordType;
+      });
+      if (!matchingLog) throw new Error("The existing blockchain proof has different record metadata.");
+      txHash = matchingLog.transactionHash;
+      blockNumber = matchingLog.blockNumber;
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("different record metadata")) throw error;
+    // Some RPC providers restrict historical log queries. The contract's
+    // record mapping above still proves the hash, patient, type, and state.
+  }
+
+  const blockchainTimestamp = Number(proof.timestamp) > 0 ? new Date(Number(proof.timestamp) * 1000) : new Date();
+  await prisma.$transaction(async (database) => {
+    await database.medicalRecord.update({
+      where: { id: record.id },
+      data: {
+        blockchainStatus: record.blockchainStatus === BlockchainStatus.VERIFIED ? BlockchainStatus.VERIFIED : BlockchainStatus.ANCHORED,
+        blockchainTxHash: txHash,
+        blockchainBlockNumber: blockNumber,
+        blockchainTimestamp,
+        blockchainError: null
+      }
+    });
+    if (txHash) {
+      const transaction = await database.blockchainTransaction.findFirst({ where: { txHash } });
+      if (transaction) {
+        await database.blockchainTransaction.update({ where: { id: transaction.id }, data: { recordId: record.id, blockNumber, status: TransactionStatus.CONFIRMED, confirmedAt: blockchainTimestamp, errorMessage: null } });
+      } else {
+        await database.blockchainTransaction.create({ data: { recordId: record.id, transactionType: TransactionType.RECORD, txHash, blockNumber, network: String(env.CHAIN_ID), status: TransactionStatus.CONFIRMED, confirmedAt: blockchainTimestamp } });
+      }
+    }
+  });
+
+  return { alreadyAnchored: true as const, txHash, blockNumber, timestamp: blockchainTimestamp };
+}
+
 export async function confirmWalletRecordTransaction(recordId: string, txHash: string) {
-  if (!env.RPC_URL || !env.CONTRACT_ADDRESS) throw new Error("Blockchain RPC and contract address are not configured");
+  if (!env.RPC_URL || !env.CONTRACT_ADDRESS || !env.CHAIN_ID) throw new Error("Blockchain RPC, contract address, and chain ID are not configured");
   const provider = new JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
   const [record, receipt, transaction] = await Promise.all([
     prisma.medicalRecord.findUnique({ where: { id: recordId }, include: { patient: true } }),
@@ -51,10 +160,11 @@ export async function confirmWalletRecordTransaction(recordId: string, txHash: s
   const expectedPatient = patientIdHash(record.patient.healthId).toLowerCase();
   const expectedRecord = `0x${record.fileHash}`.toLowerCase();
   const expectedMetadata = `0x${record.metadataHash}`.toLowerCase();
+  const expectedRecordType = recordTypeCode(record.recordType);
   const event = receipt.logs
     .filter((log) => getAddress(log.address) === getAddress(env.CONTRACT_ADDRESS!))
     .map((log) => { try { return iface.parseLog(log); } catch { return null; } })
-    .find((log) => log?.name === "RecordRegistered" && String(log.args.patientIdHash).toLowerCase() === expectedPatient && String(log.args.recordHash).toLowerCase() === expectedRecord && String(log.args.metadataHash).toLowerCase() === expectedMetadata);
+    .find((log) => log?.name === "RecordRegistered" && String(log.args.patientIdHash).toLowerCase() === expectedPatient && String(log.args.recordHash).toLowerCase() === expectedRecord && String(log.args.metadataHash).toLowerCase() === expectedMetadata && Number(log.args.recordType) === expectedRecordType);
   if (!event) throw new Error("Receipt does not contain the expected RecordRegistered proof");
 
   const block = await provider.getBlock(receipt.blockNumber);
@@ -72,18 +182,13 @@ export async function anchorRecord(input: {
   metadataHash: string;
   recordType: number;
 }) {
-  const txLog = await prisma.blockchainTransaction.create({
-    data: { recordId: input.recordId, transactionType: TransactionType.RECORD, status: TransactionStatus.PENDING }
-  });
-
   const contract = getContract();
-  if (!contract) {
-    await prisma.blockchainTransaction.update({
-      where: { id: txLog.id },
-      data: { status: TransactionStatus.FAILED, errorMessage: "Blockchain not configured. Fill RPC_URL, private key, and contract address." }
-    });
+  if (!contract || !env.CHAIN_ID) {
     return { status: BlockchainStatus.PENDING, error: "Blockchain not configured" };
   }
+  const txLog = await prisma.blockchainTransaction.create({
+    data: { recordId: input.recordId, transactionType: TransactionType.RECORD, network: String(env.CHAIN_ID), status: TransactionStatus.PENDING }
+  });
 
   try {
     const tx = await contract.registerRecord(patientIdHash(input.healthId), `0x${input.fileHash}`, `0x${input.metadataHash}`, input.recordType);
