@@ -1,0 +1,10 @@
+{
+  "contractName": "MediChainHealthRecords",
+  "address": "0x81d5060c14Ff5e42F30a32A35d1FC142BE44799c",
+  "deployer": "0xe29Cb9784DEdA9c0823e5D7fc052579fFffFB78A",
+  "network": "configured",
+  "chainId": 324705682,
+  "transactionHash": "0x751fa99f313a7462f4124489edba1abf5e09268bf033b70aeb5662edb1415650",
+  "explorer": "https://base-sepolia-testnet-explorer.skalenodes.com/tx/0x751fa99f313a7462f4124489edba1abf5e09268bf033b70aeb5662edb1415650",
+  "deployedAt": "2026-08-10T10:06:45.512Z"
+}
